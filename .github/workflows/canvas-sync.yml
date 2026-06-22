@@ -1,0 +1,44 @@
+name: Canvas sync
+
+on:
+  schedule:
+    # GitHub cron is UTC and does NOT adjust for daylight saving.
+    # Times below target US Pacific during PDT (summer, UTC-7).
+    # In PST (winter, UTC-8) each run lands one hour earlier.
+    - cron: "7 16 * * *"   # ~9:00 AM Pacific
+    - cron: "7 0 * * *"    # ~5:00 PM Pacific
+    - cron: "7 7 * * *"    # ~12:00 AM (midnight) Pacific
+  workflow_dispatch: {}     # manual "Run workflow" button
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Persist grade-notification state between runs WITHOUT committing it to
+      # the (public) repo. The cache holds state.json so we don't re-notify.
+      - name: Restore notification state
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: canvas-sync-state-${{ github.run_id }}
+          restore-keys: |
+            canvas-sync-state-
+
+      - name: Run sync
+        env:
+          CANVAS_WVM_TOKEN: ${{ secrets.CANVAS_WVM_TOKEN }}
+          CANVAS_BERK_TOKEN: ${{ secrets.CANVAS_BERK_TOKEN }}
+          TODOIST_TOKEN: ${{ secrets.TODOIST_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python canvas_sync.py
