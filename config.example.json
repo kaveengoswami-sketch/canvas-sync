@@ -1,0 +1,31 @@
+{
+  "lookahead_days": 14,
+  "recent_overdue_days": 7,
+
+  "track_mode": "all",
+  "only_course_ids": [],
+  "ignore_course_ids": [],
+  "ignore_name_patterns": [
+    "Financial Aid",
+    "Health Services",
+    "Resource Center",
+    "Success Center",
+    "Student Services",
+    "Tutoring",
+    "Orientation",
+    "Enrollment",
+    "Advising",
+    "PartySafe",
+    "Training"
+  ],
+
+  "notify_grades": true,
+
+  "schools": [
+    {
+      "key": "school1",
+      "base": "https://yourschool.instructure.com",
+      "token_env": "CANVAS_TOKEN_1"
+    }
+  ]
+}

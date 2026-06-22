@@ -1,0 +1,39 @@
+{
+  "lookahead_days": 14,
+  "recent_overdue_days": 7,
+
+  "track_mode": "all",
+  "only_course_ids": [],
+  "ignore_course_ids": [],
+  "ignore_name_patterns": [
+    "Financial Aid",
+    "Health Services",
+    "Resource Center",
+    "Success Center",
+    "Student Services",
+    "Tutoring",
+    "Orientation",
+    "Enrollment",
+    "Advising",
+    "Golden Bear",
+    "Bear Pact",
+    "PartySafe",
+    "SHAPE",
+    "Topic Reviews"
+  ],
+
+  "notify_grades": true,
+
+  "schools": [
+    {
+      "key": "WVM",
+      "base": "https://wvm.instructure.com",
+      "token_env": "CANVAS_WVM_TOKEN"
+    },
+    {
+      "key": "Berkeley",
+      "base": "https://bcourses.berkeley.edu",
+      "token_env": "CANVAS_BERK_TOKEN"
+    }
+  ]
+}
