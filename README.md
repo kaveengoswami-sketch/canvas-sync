@@ -20,6 +20,10 @@ Canvas (read) ──▶ this script (on GitHub) ──▶ Todoist (write) + ntfy
 Your data only ever travels between Canvas, GitHub's runner, Todoist, and ntfy.
 No model, no third party sees your grades.
 
+> 🖥️ **Prefer a UI?** There's a desktop setup app — enter your tokens, pick
+> courses from dropdowns, click **Connect & Deploy**, done. See
+> [`app/README.md`](app/README.md) (`python app/app.py`).
+
 ---
 
 ## How it works

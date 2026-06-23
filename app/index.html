@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas Sync Setup</title>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --panel2:#1d2130; --line:#2a2f3e;
+    --text:#e7e9ee; --muted:#9aa3b2; --accent:#6c8cff; --accent2:#8a6cff;
+    --ok:#3fb950; --bad:#f85149; --radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(160deg,#0f1117,#12141d);color:var(--text);
+    font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;padding:22px 22px 60px}
+  h1{font-size:20px;margin:0 0 2px;letter-spacing:.2px}
+  .sub{color:var(--muted);margin:0 0 18px;font-size:13px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 0 rgba(255,255,255,.02) inset}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+    margin:0 0 12px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .badge{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);color:var(--muted)}
+  .badge.ok{color:var(--ok);border-color:#27482f;background:#10261688}
+  .badge.bad{color:var(--bad);border-color:#5a2626;background:#2a131388}
+  label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  input[type=text],input[type=password],input[type=date]{width:100%;background:var(--panel2);
+    border:1px solid var(--line);color:var(--text);border-radius:9px;padding:9px 11px;outline:none}
+  input:focus{border-color:var(--accent)}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .row > div{flex:1;min-width:160px}
+  button{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:9px;padding:9px 14px;cursor:pointer;font-weight:600;transition:.15s}
+  button:hover{border-color:var(--accent);color:#fff}
+  button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff}
+  button.primary:hover{filter:brightness(1.08)}
+  button.ghost{background:transparent}
+  .mini{font-size:12px;padding:6px 10px}
+  .hint{font-size:11px;color:var(--muted);margin-top:6px}
+  .school{border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:12px;background:var(--panel2)}
+  .courses{margin-top:10px;max-height:210px;overflow:auto;border:1px solid var(--line);
+    border-radius:9px;padding:8px;background:#11141d;display:none}
+  .course{display:flex;align-items:center;gap:9px;padding:5px 6px;border-radius:7px}
+  .course:hover{background:#1b2030}
+  .course input{width:16px;height:16px;accent-color:var(--accent)}
+  .course span.id{margin-left:auto;color:var(--muted);font-size:11px}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+  .spacer{flex:1}
+  .status{font-size:12px;color:var(--muted)}
+  .status.ok{color:var(--ok)} .status.bad{color:var(--bad)}
+  #log{white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace;font-size:12px;
+    background:#0c0e15;border:1px solid var(--line);border-radius:9px;padding:12px;
+    min-height:60px;color:#c8d0e0;display:none}
+  .deploybar{position:fixed;left:0;right:0;bottom:0;background:#0c0e15ee;border-top:1px solid var(--line);
+    padding:12px 22px;display:flex;align-items:center;gap:14px;backdrop-filter:blur(6px)}
+  .check{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+  <h1>Canvas Sync</h1>
+  <p class="sub">Enter your info, pick your courses, connect GitHub — then it runs itself in the cloud, 3× a day, even with your laptop off.</p>
+
+  <!-- GitHub -->
+  <div class="card">
+    <h2>1 · GitHub <span id="ghBadge" class="badge">checking…</span></h2>
+    <p class="hint">GitHub runs your sync for free, around the clock. This is the engine — you just connect once.</p>
+    <div class="toolbar">
+      <button class="mini" onclick="checkGitHub()">Check connection</button>
+      <button class="mini ghost" onclick="connectGitHub()">Connect GitHub…</button>
+      <span id="ghStatus" class="status"></span>
+    </div>
+    <label>Repository (owner/name)</label>
+    <input id="repo" type="text" placeholder="yourname/canvas-sync">
+    <p class="hint">Where your private sync lives. If it doesn't exist yet, it'll be created.</p>
+  </div>
+
+  <!-- Notifications -->
+  <div class="card">
+    <h2>2 · Notifications</h2>
+    <div class="row">
+      <div>
+        <label>Todoist API token</label>
+        <input id="todoist" type="password" placeholder="Settings → Integrations → Developer">
+      </div>
+      <div>
+        <label>ntfy topic (for grade & expiry alerts)</label>
+        <div style="display:flex;gap:8px">
+          <input id="ntfy" type="text" placeholder="a secret topic name">
+          <button class="mini" onclick="genTopic()">Random</button>
+        </div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button class="mini" onclick="testTodoist()">Test Todoist</button>
+      <span id="todoistStatus" class="status"></span>
+      <span class="spacer"></span>
+      <span class="hint">Install the ntfy app and subscribe to your topic to receive pushes.</span>
+    </div>
+  </div>
+
+  <!-- Schools -->
+  <div class="card">
+    <h2>3 · Schools & courses</h2>
+    <div id="schools"></div>
+    <div class="toolbar">
+      <button class="mini" onclick="addSchool()">+ Add school</button>
+      <span class="hint">Add each Canvas account, fetch courses, and tick the ones to track.</span>
+    </div>
+  </div>
+
+  <div id="log"></div>
+
+  <!-- Deploy bar -->
+  <div class="deploybar">
+    <label class="check"><input type="checkbox" id="runNow" checked> Run a test sync immediately</label>
+    <span class="spacer"></span>
+    <span id="deployStatus" class="status"></span>
+    <button class="primary" onclick="deploy()">Connect &amp; Deploy →</button>
+  </div>
+
+<script>
+let api = null;
+window.addEventListener('pywebviewready', () => { api = window.pywebview.api; checkGitHub(); });
+
+const $ = id => document.getElementById(id);
+const schoolState = {}; // idx -> {courses:[], selected:Set, trackAll:bool}
+let schoolIdx = 0;
+
+function genTopic(){
+  const r = Math.random().toString(36).slice(2,12);
+  $('ntfy').value = 'grades-' + r;
+}
+
+async function checkGitHub(){
+  if(!api) return;
+  $('ghBadge').textContent='checking…'; $('ghBadge').className='badge';
+  const s = await api.github_status();
+  if(s.connected){
+    $('ghBadge').textContent = 'connected'; $('ghBadge').className='badge ok';
+    $('ghStatus').textContent = '@'+s.user + (s.workflow_scope?'':'  (needs workflow scope — click Connect)');
+    $('ghStatus').className = 'status ' + (s.workflow_scope?'ok':'bad');
+    if(!$('repo').value && s.user) $('repo').value = s.user + '/canvas-sync';
+  } else {
+    $('ghBadge').textContent='not connected'; $('ghBadge').className='badge bad';
+    $('ghStatus').textContent = s.detail || ''; $('ghStatus').className='status bad';
+  }
+}
+async function connectGitHub(){
+  $('ghStatus').textContent='Opening browser…';
+  const r = await api.github_connect();
+  $('ghStatus').textContent = r.detail || '';
+}
+async function testTodoist(){
+  $('todoistStatus').textContent='testing…'; $('todoistStatus').className='status';
+  const r = await api.test_todoist($('todoist').value.trim());
+  $('todoistStatus').textContent = r.ok ? '✓ token works' : '✕ '+(r.error||'failed');
+  $('todoistStatus').className = 'status ' + (r.ok?'ok':'bad');
+}
+
+function addSchool(key='', base=''){
+  const idx = schoolIdx++;
+  schoolState[idx] = {courses:[], selected:new Set(), trackAll:true};
+  const div = document.createElement('div');
+  div.className='school'; div.id='school'+idx;
+  div.innerHTML = `
+    <div class="row">
+      <div><label>Label</label><input type="text" id="k${idx}" placeholder="e.g. Berkeley" value="${key}"></div>
+      <div style="flex:2"><label>Canvas URL</label><input type="text" id="b${idx}" placeholder="https://school.instructure.com" value="${base}"></div>
+    </div>
+    <div class="row">
+      <div style="flex:2"><label>Canvas API token</label><input type="password" id="t${idx}" placeholder="Canvas → Settings → Approved Integrations"></div>
+      <div><label>Token expires (optional)</label><input type="date" id="e${idx}"></div>
+    </div>
+    <div class="toolbar">
+      <button class="mini" onclick="fetchCourses(${idx})">Fetch courses</button>
+      <label class="check"><input type="checkbox" id="all${idx}" checked onchange="toggleAll(${idx})"> Track all courses</label>
+      <span id="cs${idx}" class="status"></span>
+      <span class="spacer"></span>
+      <button class="mini ghost" onclick="removeSchool(${idx})">Remove</button>
+    </div>
+    <div class="courses" id="courses${idx}"></div>`;
+  $('schools').appendChild(div);
+}
+function removeSchool(idx){ $('school'+idx).remove(); delete schoolState[idx]; }
+function toggleAll(idx){
+  schoolState[idx].trackAll = $('all'+idx).checked;
+  $('courses'+idx).style.display = $('all'+idx).checked ? 'none' : (schoolState[idx].courses.length?'block':'none');
+}
+async function fetchCourses(idx){
+  const base=$('b'+idx).value.trim(), token=$('t'+idx).value.trim();
+  $('cs'+idx).textContent='fetching…'; $('cs'+idx).className='status';
+  const r = await api.fetch_courses(base, token);
+  if(!r.ok){ $('cs'+idx).textContent='✕ '+r.error; $('cs'+idx).className='status bad'; return; }
+  schoolState[idx].courses = r.courses;
+  schoolState[idx].selected = new Set(r.courses.map(c=>c.id));
+  const box=$('courses'+idx); box.innerHTML='';
+  r.courses.forEach(c=>{
+    const row=document.createElement('label'); row.className='course';
+    row.innerHTML=`<input type="checkbox" checked data-id="${c.id}"><span>${c.name}</span><span class="id">${c.id}</span>`;
+    row.querySelector('input').addEventListener('change',e=>{
+      const id=c.id; e.target.checked?schoolState[idx].selected.add(id):schoolState[idx].selected.delete(id);
+    });
+    box.appendChild(row);
+  });
+  $('cs'+idx).textContent='✓ '+r.courses.length+' courses — untick all + pick some to limit';
+  $('cs'+idx).className='status ok';
+  $('all'+idx).checked=false; schoolState[idx].trackAll=false; box.style.display='block';
+}
+
+async function deploy(){
+  const schools=[];
+  for(const idx in schoolState){
+    if(!$('school'+idx)) continue;
+    const key=$('k'+idx).value.trim(), base=$('b'+idx).value.trim(), token=$('t'+idx).value.trim();
+    if(!key||!base){ continue; }
+    const st=schoolState[idx];
+    const s={key,base,token,expiry:$('e'+idx).value||''};
+    if(!st.trackAll && st.courses.length){ s.track_mode='only'; s.only_course_ids=[...st.selected]; }
+    schools.push(s);
+  }
+  if(!schools.length){ setDeploy('Add at least one school first.',false); return; }
+  if(!$('repo').value.includes('/')){ setDeploy('Enter a repo as owner/name.',false); return; }
+  setDeploy('Deploying…',null);
+  const payload={
+    repo:$('repo').value.trim(), todoist:$('todoist').value.trim(),
+    ntfy:$('ntfy').value.trim(), run_now:$('runNow').checked, schools
+  };
+  const r = await api.deploy(payload);
+  const log=$('log'); log.style.display='block'; log.textContent=(r.log||[]).join('\n');
+  setDeploy(r.ok?'✓ Done':'✕ Something failed — see log', r.ok);
+}
+function setDeploy(msg,ok){ const e=$('deployStatus'); e.textContent=msg;
+  e.className='status '+(ok===null?'':(ok?'ok':'bad')); }
+
+// start with one empty school
+addSchool();
+</script>
+</body>
+</html>
