@@ -87,11 +87,37 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 }
 ```
 
-**Choosing courses two ways:**
+**Choosing courses — the easy way (interactive menu):**
+```bash
+python configure.py
+```
+This fetches your active courses from each school and shows a numbered list.
+Type the numbers you want to track (e.g. `1,3,5`) or `a` for all. It can also
+record token expiry dates. It writes your choices to `config.json` — commit &
+push it so GitHub Actions uses them.
+
+**Or edit `config.json` by hand, two ways:**
 - *Subtractive* (default): `track_mode: "all"` and list junk courses (resource
   centers, orientation, advising) under `ignore_name_patterns`.
 - *Additive*: `track_mode: "only"` and put the exact Canvas course IDs you care
   about in `only_course_ids`. (Find IDs in the course URL: `…/courses/12345`.)
+
+**Per-school overrides:** any of `track_mode`, `only_course_ids`,
+`ignore_course_ids`, `ignore_name_patterns` can be set *inside a school* to
+override the global setting — e.g. track everything at one school but only one
+course at another.
+
+### Token expiry reminders
+Canvas tokens can be set to expire. Record each token's expiry date and get an
+ntfy push as it approaches (at 14/7/3/1 days, then on expiry):
+```jsonc
+"expiry_warn_days": 14,
+"schools": [
+  { "key": "WVM", "base": "...", "token_env": "CANVAS_WVM_TOKEN",
+    "token_expires": "2026-12-31" }
+]
+```
+`python configure.py` can set these for you. Requires `NTFY_TOPIC` to be set.
 
 ### 5. Confirm the schedule
 `.github/workflows/canvas-sync.yml` runs **3× daily**. The cron lines are in
