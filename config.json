@@ -23,6 +23,7 @@
   ],
 
   "notify_grades": true,
+  "expiry_warn_days": 14,
 
   "schools": [
     {
@@ -33,7 +34,9 @@
     {
       "key": "Berkeley",
       "base": "https://bcourses.berkeley.edu",
-      "token_env": "CANVAS_BERK_TOKEN"
+      "token_env": "CANVAS_BERK_TOKEN",
+      "track_mode": "only",
+      "only_course_ids": [1554980]
     }
   ]
 }

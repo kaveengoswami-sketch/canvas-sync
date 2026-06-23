@@ -49,7 +49,8 @@ DEFAULT_CONFIG = {
     "ignore_course_ids": [],       # always excluded
     "ignore_name_patterns": [],    # course names containing any of these are skipped
     "notify_grades": True,
-    "schools": [],                 # [{"key","base","token_env"}]
+    "expiry_warn_days": 14,        # start warning this many days before a token expires
+    "schools": [],                 # [{"key","base","token_env","token_expires"}]
 }
 
 
@@ -67,7 +68,7 @@ DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
 TODOIST_TOKEN = os.environ.get("TODOIST_TOKEN", "")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 
-TODOIST_API = "https://api.todoist.com/rest/v2"
+TODOIST_API = "https://api.todoist.com/api/v1"
 TODOIST_LABEL = "canvas"
 MARKER_PREFIX = "canvas-sync-id:"
 
@@ -121,15 +122,25 @@ def clean_course_name(name: str) -> str:
 # Course selection
 # --------------------------------------------------------------------------
 
-def is_tracked(course: dict, cfg: dict) -> bool:
+def effective_selection(school: dict, cfg: dict) -> dict:
+    """Course-selection settings for a school, with per-school overrides
+    falling back to the global config."""
+    return {
+        k: school.get(k, cfg[k])
+        for k in ("track_mode", "only_course_ids",
+                  "ignore_course_ids", "ignore_name_patterns")
+    }
+
+
+def is_tracked(course: dict, sel: dict) -> bool:
     cid = str(course.get("id"))
     name = course.get("name", "") or ""
-    if cfg["track_mode"] == "only":
-        return cid in {str(x) for x in cfg["only_course_ids"]}
-    if cid in {str(x) for x in cfg["ignore_course_ids"]}:
+    if sel["track_mode"] == "only":
+        return cid in {str(x) for x in sel["only_course_ids"]}
+    if cid in {str(x) for x in sel["ignore_course_ids"]}:
         return False
     low = name.lower()
-    return not any(pat.lower() in low for pat in cfg["ignore_name_patterns"])
+    return not any(pat.lower() in low for pat in sel["ignore_name_patterns"])
 
 
 # --------------------------------------------------------------------------
@@ -184,9 +195,10 @@ def collect_school(school: dict, cfg: dict):
     lookahead = NOW + dt.timedelta(days=cfg["lookahead_days"])
     overdue_floor = NOW - dt.timedelta(days=cfg["recent_overdue_days"])
 
+    sel = effective_selection(school, cfg)
     courses = [c for c in canvas_paginated(base, "/courses", token,
                                            {"enrollment_state": "active"})
-               if is_tracked(c, cfg)]
+               if is_tracked(c, sel)]
 
     for c in courses:
         cid = c.get("id")
@@ -272,13 +284,24 @@ def collect_school(school: dict, cfg: dict):
 # --------------------------------------------------------------------------
 
 def todoist_existing_markers() -> set:
+    """All sync-markers already present on our Todoist tasks (paginated v1 API)."""
     headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
-    r = _get(f"{TODOIST_API}/tasks", headers, {"label": TODOIST_LABEL})
     keys = set()
-    for task in r.json():
-        for line in (task.get("description") or "").splitlines():
-            if line.startswith(MARKER_PREFIX):
-                keys.add(line[len(MARKER_PREFIX):].strip())
+    cursor = None
+    while True:
+        params = {"limit": 200}
+        if cursor:
+            params["cursor"] = cursor
+        data = _get(f"{TODOIST_API}/tasks", headers, params).json()
+        # v1 returns {"results": [...], "next_cursor": ...}; tolerate a bare list too
+        tasks = data.get("results", data) if isinstance(data, dict) else data
+        for task in tasks:
+            for line in (task.get("description") or "").splitlines():
+                if line.startswith(MARKER_PREFIX):
+                    keys.add(line[len(MARKER_PREFIX):].strip())
+        cursor = data.get("next_cursor") if isinstance(data, dict) else None
+        if not cursor:
+            break
     return keys
 
 
@@ -318,6 +341,44 @@ def ntfy_push(title: str, message: str):
 # --------------------------------------------------------------------------
 # State (grade-notification dedupe) -- persisted via Actions cache, not committed
 # --------------------------------------------------------------------------
+
+def check_token_expiries(cfg: dict, state: dict):
+    """Push a warning as each Canvas token nears its configured expiry date.
+    Fires at most once per threshold (14/7/3/1 days) per school, tracked in state."""
+    warn = int(cfg.get("expiry_warn_days", 14))
+    ladder = [d for d in (14, 7, 3, 1) if d <= warn] or [warn]
+    today = dt.date.today()
+    fired = state.setdefault("expiry_fired", {})
+
+    for school in cfg["schools"]:
+        exp = school.get("token_expires")
+        if not exp:
+            continue
+        try:
+            exp_date = dt.date.fromisoformat(exp)
+        except ValueError:
+            print(f"[{school['key']}] bad token_expires '{exp}' (use YYYY-MM-DD)")
+            continue
+
+        days_left = (exp_date - today).days
+        done = set(fired.get(school["key"], []))
+
+        if days_left < 0:
+            if "expired" not in done:
+                ntfy_push("Canvas token EXPIRED",
+                          f"{school['key']} Canvas token expired on {exp}. "
+                          f"Generate a new one and update the GitHub secret.")
+                done.add("expired")
+        else:
+            applicable = [t for t in ladder if days_left <= t and t not in done]
+            if applicable:
+                ntfy_push("Canvas token expiring soon",
+                          f"{school['key']} Canvas token expires in {days_left} "
+                          f"day(s) on {exp}. Regenerate it and update the secret.")
+                done.update(applicable)  # collapse backlog; one ping, not several
+
+        fired[school["key"]] = sorted(done, key=str)
+
 
 def load_state() -> dict:
     if STATE_PATH.exists():
@@ -360,9 +421,10 @@ def main() -> int:
     print(f"{created} new Todoist task(s)"
           f"{' (dry run)' if DRY_RUN else ''}.")
 
-    # ---- Grade notifications ----
+    # ---- Notifications (grades + token expiry) ----
+    state = load_state()
+
     if cfg["notify_grades"]:
-        state = load_state()
         seen = set(state.get("graded_seen", []))
         first_run = "graded_seen" not in state
         new_grades = [g for g in graded if g["key"] not in seen]
@@ -380,8 +442,11 @@ def main() -> int:
                   f"{' (dry run)' if DRY_RUN else ''}.")
 
         state["graded_seen"] = sorted(seen | {g["key"] for g in graded})
-        if not DRY_RUN:
-            save_state(state)
+
+    check_token_expiries(cfg, state)
+
+    if not DRY_RUN:
+        save_state(state)
 
     print("\nDone.")
     return 0

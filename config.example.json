@@ -20,12 +20,21 @@
   ],
 
   "notify_grades": true,
+  "expiry_warn_days": 14,
 
   "schools": [
     {
       "key": "school1",
       "base": "https://yourschool.instructure.com",
       "token_env": "CANVAS_TOKEN_1"
+    },
+    {
+      "key": "school2",
+      "base": "https://anotherschool.instructure.com",
+      "token_env": "CANVAS_TOKEN_2",
+      "_comment": "Per-school overrides win over the global settings above.",
+      "track_mode": "only",
+      "only_course_ids": [123456]
     }
   ]
 }
