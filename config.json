@@ -23,7 +23,13 @@
   ],
 
   "notify_grades": true,
+  "notify_due": true,
   "expiry_warn_days": 14,
+  "utc_offset_hours": -7,
+  "todoist_project_map": {
+    "69837": "6gqVCfr7pJp7ffMX",
+    "1554980": "6gvR5jhfw3gx64fM"
+  },
 
   "schools": [
     {

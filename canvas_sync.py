@@ -48,8 +48,11 @@ DEFAULT_CONFIG = {
     "only_course_ids": [],         # used when track_mode == "only"
     "ignore_course_ids": [],       # always excluded
     "ignore_name_patterns": [],    # course names containing any of these are skipped
-    "notify_grades": True,
+    "notify_grades": True,         # push when a grade is posted or changes
+    "notify_due": True,            # push the day before and day of a due date
     "expiry_warn_days": 14,        # start warning this many days before a token expires
+    "todoist_project_map": {},     # {"<course_id>": "<todoist_project_id>"}
+    "utc_offset_hours": 0,         # your timezone offset, e.g. -7 for US Pacific (PDT)
     "schools": [],                 # [{"key","base","token_env","token_expires"}]
 }
 
@@ -73,6 +76,12 @@ TODOIST_LABEL = "canvas"
 MARKER_PREFIX = "canvas-sync-id:"
 
 NOW = dt.datetime.now(dt.timezone.utc)
+UTC_OFFSET_HOURS = 0  # set from config in main(); used for local-date bucketing
+
+
+def local_date(when: dt.datetime) -> dt.date:
+    """The calendar date of a UTC datetime in the user's configured timezone."""
+    return (when + dt.timedelta(hours=UTC_OFFSET_HOURS)).date()
 
 
 # --------------------------------------------------------------------------
@@ -255,7 +264,7 @@ def collect_school(school: dict, cfg: dict):
                 continue
             outstanding.append({
                 "key": f"{key}-a{a['id']}",
-                "school": key, "course": cname,
+                "school": key, "course": cname, "course_id": str(cid),
                 "title": a.get("name", "Assignment"), "due": due,
             })
 
@@ -271,7 +280,7 @@ def collect_school(school: dict, cfg: dict):
             need = "Post + reply" if not has_post else "Reply to a classmate"
             outstanding.append({
                 "key": f"{key}-d{t['id']}",
-                "school": key, "course": cname,
+                "school": key, "course": cname, "course_id": str(cid),
                 "title": f"{need}: {t.get('title', 'Discussion')}", "due": due,
             })
 
@@ -305,16 +314,19 @@ def todoist_existing_markers() -> set:
     return keys
 
 
-def todoist_create(item: dict):
+def todoist_create(item: dict, project_id: Optional[str] = None):
     content = f"[{item['school']} - {item['course']}] {item['title']}"
     body = {
         "content": content,
         "description": f"{MARKER_PREFIX}{item['key']}",
-        "due_date": item["due"].astimezone().strftime("%Y-%m-%d"),
+        "due_date": local_date(item["due"]).strftime("%Y-%m-%d"),
         "labels": [TODOIST_LABEL],
     }
+    if project_id:
+        body["project_id"] = str(project_id)
     if DRY_RUN:
-        print(f"  DRY_RUN create: {content}  (due {body['due_date']})")
+        tag = f" -> project {project_id}" if project_id else ""
+        print(f"  DRY_RUN create: {content}  (due {body['due_date']}){tag}")
         return
     r = requests.post(f"{TODOIST_API}/tasks", json=body,
                       headers={"Authorization": f"Bearer {TODOIST_TOKEN}"}, timeout=30)
@@ -341,6 +353,26 @@ def ntfy_push(title: str, message: str):
 # --------------------------------------------------------------------------
 # State (grade-notification dedupe) -- persisted via Actions cache, not committed
 # --------------------------------------------------------------------------
+
+def notify_due_soon(outstanding: list, state: dict):
+    """Push the day before and the day of each outstanding item's due date.
+    Each (item, bucket) fires at most once, tracked in state."""
+    fired = set(state.get("due_fired", []))
+    today = local_date(NOW)
+    for item in sorted(outstanding, key=lambda i: i["due"]):
+        days = (local_date(item["due"]) - today).days
+        bucket = "today" if days == 0 else ("tomorrow" if days == 1 else None)
+        if not bucket:
+            continue
+        tok = f"{item['key']}:{bucket}"
+        if tok in fired:
+            continue
+        when = "due TODAY" if bucket == "today" else "due tomorrow"
+        ntfy_push(f"Assignment {when}",
+                  f"{item['title']}  ({item['school']} · {item['course']})")
+        fired.add(tok)
+    state["due_fired"] = sorted(fired)
+
 
 def check_token_expiries(cfg: dict, state: dict):
     """Push a warning as each Canvas token nears its configured expiry date.
@@ -399,6 +431,8 @@ def save_state(state: dict):
 
 def main() -> int:
     cfg = load_config()
+    global UTC_OFFSET_HOURS
+    UTC_OFFSET_HOURS = int(cfg.get("utc_offset_hours", 0))
     if not DRY_RUN and not TODOIST_TOKEN:
         print("ERROR: TODOIST_TOKEN not set (and DRY_RUN is off).", file=sys.stderr)
         return 1
@@ -411,12 +445,13 @@ def main() -> int:
 
     # ---- Todoist sync ----
     print(f"\nOutstanding total: {len(outstanding)}")
+    project_map = cfg.get("todoist_project_map", {}) or {}
     existing = set() if DRY_RUN else todoist_existing_markers()
     created = 0
     for item in sorted(outstanding, key=lambda i: i["due"]):
         if item["key"] in existing:
             continue
-        todoist_create(item)
+        todoist_create(item, project_map.get(item.get("course_id")))
         created += 1
     print(f"{created} new Todoist task(s)"
           f"{' (dry run)' if DRY_RUN else ''}.")
@@ -425,23 +460,36 @@ def main() -> int:
     state = load_state()
 
     if cfg["notify_grades"]:
-        seen = set(state.get("graded_seen", []))
-        first_run = "graded_seen" not in state
-        new_grades = [g for g in graded if g["key"] not in seen]
-
+        prev = state.get("grades")            # {key: score}
+        first_run = prev is None
+        prev = prev or {}
+        pushes = 0
+        for g in sorted(graded, key=lambda x: x.get("graded_at") or ""):
+            score = g["score"]
+            pts = f"/{g['points']:g}" if g.get("points") else ""
+            where = f"({g['school']} · {g['course']})"
+            if first_run:
+                continue                       # baseline only, no spam
+            if g["key"] not in prev:
+                ntfy_push("New grade posted",
+                          f"{g['title']} — {score:g}{pts}  {where}")
+                pushes += 1
+            elif prev[g["key"]] != score:
+                ntfy_push("Grade changed",
+                          f"{g['title']} — {prev[g['key']]:g} → {score:g}{pts}  {where}")
+                pushes += 1
+        # record current scores (keep any past keys no longer returned)
+        merged = dict(prev)
+        merged.update({g["key"]: g["score"] for g in graded})
+        state["grades"] = merged
         if first_run:
-            # Baseline: record everything already graded, notify nothing.
-            print(f"\nGrade baseline set ({len(graded)} already graded; "
-                  f"no notifications on first run).")
+            print(f"\nGrade baseline set ({len(graded)} recorded; no first-run alerts).")
         else:
-            for g in sorted(new_grades, key=lambda x: x.get("graded_at") or ""):
-                pts = f"/{g['points']:g}" if g.get("points") else ""
-                msg = f"{g['title']} — {g['score']:g}{pts}  ({g['school']} · {g['course']})"
-                ntfy_push("New grade posted", msg)
-            print(f"\n{len(new_grades)} new grade notification(s)"
+            print(f"\n{pushes} grade notification(s)"
                   f"{' (dry run)' if DRY_RUN else ''}.")
 
-        state["graded_seen"] = sorted(seen | {g["key"] for g in graded})
+    if cfg.get("notify_due", True):
+        notify_due_soon(outstanding, state)
 
     check_token_expiries(cfg, state)
 
