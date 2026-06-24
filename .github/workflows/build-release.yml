@@ -1,0 +1,43 @@
+name: Build Windows exe
+
+on:
+  push:
+    tags:
+      - "v*"            # build + attach to the release for any v* tag
+  workflow_dispatch: {}  # manual run (uploads an artifact, no release)
+
+permissions:
+  contents: write        # needed to attach the exe to the release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: pip install pyinstaller pillow requests pywebview
+
+      - name: Generate icon
+        run: python app/make_icon.py
+
+      - name: Build exe
+        run: python app/build_exe.py
+
+      - name: Upload build artifact (for manual runs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: CanvasSync-exe
+          path: dist/CanvasSync.exe
+
+      - name: Attach exe to the release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CanvasSync.exe
