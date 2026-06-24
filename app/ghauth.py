@@ -26,7 +26,6 @@ GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 _EXTRA_PATH_DIRS = [
     r"C:\Program Files\GitHub CLI",
     r"C:\Program Files\Git\cmd",
-    r"D:\Git\cmd",
 ]
 
 

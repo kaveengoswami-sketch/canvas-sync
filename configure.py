@@ -36,7 +36,10 @@ def load_dotenv():
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip())
+        val = v.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+            val = val[1:-1]
+        os.environ.setdefault(k.strip(), val)
 
 
 def fetch_courses(base, token):

@@ -104,12 +104,18 @@ def _get(url: str, headers: dict, params: Optional[dict] = None) -> requests.Res
     raise RuntimeError("unreachable")
 
 
-def canvas_paginated(base: str, path: str, token: str, params: Optional[dict] = None):
+def canvas_paginated(base: str, path: str, token: str, params: Optional[dict] = None,
+                     max_pages: int = 200):
     headers = {"Authorization": f"Bearer {token}"}
     params = dict(params or {})
     params.setdefault("per_page", 100)
     url = f"{base}/api/v1{path}"
+    page = 0
     while url:
+        page += 1
+        if page > max_pages:
+            print(f"WARNING: canvas_paginated hit max_pages ({max_pages}) for {path}")
+            break
         r = _get(url, headers, params)
         for item in r.json():
             yield item
@@ -302,8 +308,17 @@ def todoist_existing_markers() -> set:
         if cursor:
             params["cursor"] = cursor
         data = _get(f"{TODOIST_API}/tasks", headers, params).json()
+        # Warn if the response structure is unexpected.
+        if not isinstance(data, (dict, list)):
+            print(f"WARNING: todoist_existing_markers got unexpected response "
+                  f"type {type(data).__name__}; returning empty set")
+            break
         # v1 returns {"results": [...], "next_cursor": ...}; tolerate a bare list too
         tasks = data.get("results", data) if isinstance(data, dict) else data
+        if not isinstance(tasks, list):
+            print(f"WARNING: todoist_existing_markers expected a list of tasks "
+                  f"but got {type(tasks).__name__}; returning empty set")
+            break
         for task in tasks:
             for line in (task.get("description") or "").splitlines():
                 if line.startswith(MARKER_PREFIX):
@@ -379,7 +394,7 @@ def check_token_expiries(cfg: dict, state: dict):
     Fires at most once per threshold (14/7/3/1 days) per school, tracked in state."""
     warn = int(cfg.get("expiry_warn_days", 14))
     ladder = [d for d in (14, 7, 3, 1) if d <= warn] or [warn]
-    today = dt.date.today()
+    today = local_date(NOW)
     fired = state.setdefault("expiry_fired", {})
 
     for school in cfg["schools"]:
@@ -464,19 +479,22 @@ def main() -> int:
         first_run = prev is None
         prev = prev or {}
         pushes = 0
+        def fmt_score(s):
+            try: return f"{s:g}"
+            except (ValueError, TypeError): return str(s)
         for g in sorted(graded, key=lambda x: x.get("graded_at") or ""):
             score = g["score"]
-            pts = f"/{g['points']:g}" if g.get("points") else ""
+            pts = f"/{fmt_score(g['points'])}" if g.get("points") else ""
             where = f"({g['school']} · {g['course']})"
             if first_run:
                 continue                       # baseline only, no spam
             if g["key"] not in prev:
                 ntfy_push("New grade posted",
-                          f"{g['title']} — {score:g}{pts}  {where}")
+                          f"{g['title']} — {fmt_score(score)}{pts}  {where}")
                 pushes += 1
             elif prev[g["key"]] != score:
                 ntfy_push("Grade changed",
-                          f"{g['title']} — {prev[g['key']]:g} → {score:g}{pts}  {where}")
+                          f"{g['title']} — {fmt_score(prev[g['key']])} → {fmt_score(score)}{pts}  {where}")
                 pushes += 1
         # record current scores (keep any past keys no longer returned)
         merged = dict(prev)

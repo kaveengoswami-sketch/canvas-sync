@@ -83,7 +83,6 @@ def _augmented_env():
         str(Path(os.environ.get("APPDATA", "")) / "npm"),
         r"C:\Program Files\GitHub CLI",
         r"C:\Program Files\Git\cmd",
-        r"D:\Git\cmd",
     ]
     extra = [p for p in extra if p and os.path.isdir(p)]
     env["PATH"] = os.pathsep.join(extra) + os.pathsep + env.get("PATH", "")
@@ -211,7 +210,7 @@ class Api:
             out, url = [], f"{base}/api/v1/courses"
             params = {"enrollment_state": "active", "per_page": 100}
             while url:
-                r = requests.get(url, headers=todoist_headers(token),
+                r = requests.get(url, headers={"Authorization": f"Bearer {token}"},
                                  params=params, timeout=30)
                 if r.status_code == 401:
                     return {"ok": False, "error": "Token rejected (401)."}
@@ -372,7 +371,11 @@ class Api:
 
     def actions_usage(self, repo):
         """Approx GitHub Actions minutes used this calendar month for the repo,
-        by summing recent workflow-run durations."""
+        by summing recent workflow-run durations.
+
+        NOTE: This is an approximation.  (updated_at - run_started_at) is not
+        the same as billable time, and only the most recent 100 runs are
+        fetched (the API does not expose exact billable seconds)."""
         import datetime as dt
         ok, out = _run(["gh", "api", f"repos/{repo}/actions/runs?per_page=100"],
                        cwd=Path.home())
@@ -396,13 +399,16 @@ class Api:
             if sd.year == now.year and sd.month == now.month:
                 total += max(0.0, (ud - sd).total_seconds())
                 count += 1
-        return {"ok": True, "month_minutes": round(total / 60, 1), "run_count": count}
+        # est_minutes: approximate, based on (updated_at - run_started_at)
+        # and capped at the most recent 100 runs.
+        return {"ok": True, "est_minutes": round(total / 60, 1), "run_count": count}
 
 
 def main():
     webview.create_window("Canvas Sync — Setup", str(UI_FILE),
                           js_api=Api(), width=940, height=860, min_size=(780, 660))
     webview.start()
+    return 0
 
 
 if __name__ == "__main__":
