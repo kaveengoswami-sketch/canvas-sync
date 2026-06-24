@@ -44,12 +44,17 @@ repo under `%LOCALAPPDATA%\CanvasSync` and pushes your settings from there.
    create one). The app **auto-guesses** a matching project by name (e.g. a
    "Chemistry" course → your "Chemistry" project) — you can override any guess
    from the dropdown. Leave "Track all" on to sync everything.
+4. **Schedule** — set the daily run times in your **local timezone** (defaults to
+   **9:00 AM**, **5:00 PM**, **12:00 AM**). Click a date/time field to open its
+   picker. The app converts these to UTC cron lines on deploy.
 
 Click **Load Todoist projects** first (in step 2) so the per-course dropdowns
 are populated.
 
-**Connect & Deploy** writes `config.json`, pushes it, stores your tokens as
-encrypted GitHub secrets, and (optionally) runs a test sync right away.
+**Connect & Deploy** writes `config.json`, writes your chosen run times into the
+GitHub Actions workflow (`.github/workflows/canvas-sync.yml`), pushes them,
+stores your tokens as encrypted GitHub secrets, and (optionally) runs a test
+sync right away.
 
 ## Notes
 - Tokens you enter are sent only to your own machine's backend, then to Canvas

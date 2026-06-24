@@ -12,7 +12,8 @@ account(s), and:
   changes**, the **day before and day of** a due date, and as a **token nears
   expiry**.
 - 🏫 Works with **multiple schools** at once, each with its own course list.
-- 🖥️ Optional **desktop app / .exe** for point-and-click setup.
+- 🖥️ Optional **desktop app / .exe** for point-and-click setup — including
+  picking your daily **run times in local time** (it converts to UTC for you).
 
 **No AI runs at runtime.** It's plain Python hitting REST APIs:
 
@@ -144,8 +145,15 @@ ntfy push as it approaches (at 14/7/3/1 days, then on expiry):
 ### 5. Confirm the schedule
 `.github/workflows/canvas-sync.yml` runs **3× daily**. The cron lines are in
 **UTC** (GitHub doesn't do timezones or daylight saving), preset to roughly
-**9 AM / 5 PM / 12 AM US Pacific** during summer. Adjust the numbers for your
-timezone — `M H * * *`, where `H` is the UTC hour.
+**9 AM / 5 PM / 12 AM US Pacific** during summer.
+
+> 🖥️ Using the **desktop app**? Just pick your run times in your **local
+> timezone** in its **Schedule** section — clicking **Connect & Deploy**
+> converts them to UTC and writes the cron lines for you. Hand-editing below is
+> only needed if you don't use the app.
+
+To edit by hand, adjust the numbers for your timezone — `M H * * *`, where `H`
+is the UTC hour.
 
 ### 6. Test it
 Repo → **Actions** → **Canvas sync** → **Run workflow**. Watch the log, check
