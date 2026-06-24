@@ -2,12 +2,13 @@
 """
 Canvas Sync — desktop setup app.
 
-A friendly front-end for configuring the Canvas → Todoist sync. You enter your
-tokens, pick your courses from live dropdowns, and click "Connect GitHub" — the
-app deploys your settings to GitHub so the sync runs in the cloud (laptop off).
+A friendly front-end for configuring the Canvas → Todoist sync. Enter your
+tokens, pick courses from live dropdowns, route each course to a Todoist
+project, and click "Connect & Deploy" — the app ships your settings to GitHub
+so the sync runs in the cloud (laptop off).
 
-Run:  python app/app.py
-Requires:  pip install pywebview   (and the `gh` GitHub CLI, logged in)
+Run from source:  python app/app.py
+Build an .exe:     see build_exe.py  (PyInstaller one-file, windowed)
 """
 
 import os
@@ -21,12 +22,36 @@ from pathlib import Path
 import requests
 import webview  # pip install pywebview
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-UI_FILE = Path(__file__).resolve().parent / "index.html"
+FROZEN = getattr(sys, "frozen", False)
+APP_DIR = Path(__file__).resolve().parent
+DEV_REPO_ROOT = APP_DIR.parent
+
+
+def resource_path(rel: str) -> Path:
+    """Path to a bundled resource (works in dev and inside a PyInstaller exe)."""
+    base = Path(getattr(sys, "_MEIPASS", str(APP_DIR)))
+    return base / rel
+
+
+# Where the working copy of the repo lives. In dev we use the checkout we're in;
+# as a frozen exe we keep one under %LOCALAPPDATA% and materialize files into it.
+if FROZEN:
+    WORKDIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CanvasSync" / "repo"
+    UI_FILE = resource_path("index.html")
+else:
+    WORKDIR = DEV_REPO_ROOT
+    UI_FILE = APP_DIR / "index.html"
+
+# Program files the deployed repo needs (source -> path inside the repo).
+BUNDLED = {
+    "program/canvas_sync.py": "canvas_sync.py",
+    "program/requirements.txt": "requirements.txt",
+    "program/config.example.json": "config.example.json",
+    "program/canvas-sync.yml": ".github/workflows/canvas-sync.yml",
+}
 
 
 def _augmented_env():
-    """Make sure git/gh/node are findable regardless of how the app launched."""
     env = dict(os.environ)
     extra = [
         r"C:\Program Files\nodejs",
@@ -35,19 +60,16 @@ def _augmented_env():
         r"C:\Program Files\Git\cmd",
         r"D:\Git\cmd",
     ]
-    # Keep only paths that exist, plus anything already on PATH.
     extra = [p for p in extra if p and os.path.isdir(p)]
     env["PATH"] = os.pathsep.join(extra) + os.pathsep + env.get("PATH", "")
     return env
 
 
-def _run(args, **kw):
-    """Run a command, return (ok, combined_output)."""
+def _run(args, cwd=None, **kw):
     try:
         p = subprocess.run(args, capture_output=True, text=True,
-                           env=_augmented_env(), cwd=str(REPO_ROOT), **kw)
-        out = (p.stdout or "") + (p.stderr or "")
-        return p.returncode == 0, out.strip()
+                           env=_augmented_env(), cwd=str(cwd or WORKDIR), **kw)
+        return p.returncode == 0, ((p.stdout or "") + (p.stderr or "")).strip()
     except Exception as e:
         return False, str(e)
 
@@ -57,27 +79,39 @@ def env_name_for(key: str) -> str:
     return f"CANVAS_{slug}_TOKEN"
 
 
-class Api:
-    """Methods here are callable from the UI as window.pywebview.api.<name>()."""
+def materialize_program_files():
+    """Copy bundled program files into WORKDIR if they're missing (frozen exe)."""
+    for src, dst in BUNDLED.items():
+        target = WORKDIR / dst
+        if target.exists():
+            continue
+        s = resource_path(src)
+        if s.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(s, target)
 
-    # ---- GitHub ----
+
+def todoist_headers(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+class Api:
+    # ---------- GitHub ----------
     def github_status(self):
-        ok, out = _run(["gh", "auth", "status"])
+        ok, out = _run(["gh", "auth", "status"], cwd=Path.home())
         if not ok:
             return {"connected": False, "detail": "Not logged in to GitHub CLI."}
         m = re.search(r"account (\S+)", out)
-        scopes_ok = "workflow" in out
         return {"connected": True, "user": m.group(1) if m else "?",
-                "workflow_scope": scopes_ok}
+                "workflow_scope": "workflow" in out}
 
     def github_connect(self):
-        # Opens the device-code flow in the user's browser.
         ok, out = _run(["gh", "auth", "login", "--web", "--git-protocol", "https",
-                        "--scopes", "repo,workflow"], timeout=5)
-        return {"ok": ok, "detail": out or "Follow the browser prompt, then click "
-                                            "'Check connection' again."}
+                        "--scopes", "repo,workflow"], cwd=Path.home(), timeout=5)
+        return {"ok": ok, "detail": out or "Follow the browser prompt, then "
+                                            "click 'Check connection' again."}
 
-    # ---- Canvas ----
+    # ---------- Canvas ----------
     def fetch_courses(self, base, token):
         base = (base or "").rstrip("/")
         if not base or not token:
@@ -85,54 +119,94 @@ class Api:
         try:
             out, url = [], f"{base}/api/v1/courses"
             params = {"enrollment_state": "active", "per_page": 100}
-            headers = {"Authorization": f"Bearer {token}"}
             while url:
-                r = requests.get(url, headers=headers, params=params, timeout=30)
+                r = requests.get(url, headers=todoist_headers(token),
+                                 params=params, timeout=30)
                 if r.status_code == 401:
-                    return {"ok": False, "error": "Token rejected (401). Check it."}
+                    return {"ok": False, "error": "Token rejected (401)."}
                 r.raise_for_status()
                 out.extend(r.json())
                 url = r.links.get("next", {}).get("url")
                 params = None
-            courses = [{"id": c["id"], "name": c.get("name", "Course")}
-                       for c in out if c.get("id") and c.get("name")]
-            return {"ok": True, "courses": courses}
+            return {"ok": True, "courses": [{"id": c["id"], "name": c.get("name", "")}
+                                            for c in out if c.get("id") and c.get("name")]}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # ---------- Todoist ----------
     def test_todoist(self, token):
+        ok, projects = self._projects(token)
+        return {"ok": ok, "error": "" if ok else projects}
+
+    def list_todoist_projects(self, token):
+        ok, projects = self._projects(token)
+        return {"ok": ok, "projects": projects if ok else [], "error":
+                "" if ok else projects}
+
+    def _projects(self, token):
         if not token:
-            return {"ok": False, "error": "Enter a Todoist token."}
+            return False, "Enter a Todoist token."
         try:
             r = requests.get("https://api.todoist.com/api/v1/projects",
-                             headers={"Authorization": f"Bearer {token}"}, timeout=20)
-            return {"ok": r.status_code == 200,
-                    "error": "" if r.status_code == 200 else f"HTTP {r.status_code}"}
+                             headers=todoist_headers(token), timeout=20)
+            if r.status_code != 200:
+                return False, f"HTTP {r.status_code}"
+            data = r.json()
+            items = data.get("results", data) if isinstance(data, dict) else data
+            return True, [{"id": str(p["id"]), "name": p["name"]} for p in items]
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return False, str(e)
 
-    # ---- Deploy ----
+    def _create_project(self, token, name):
+        r = requests.post("https://api.todoist.com/api/v1/projects",
+                          headers=todoist_headers(token), json={"name": name}, timeout=20)
+        r.raise_for_status()
+        return str(r.json()["id"])
+
+    # ---------- Deploy ----------
     def deploy(self, payload):
-        """payload = {repo, todoist, ntfy, expiry_warn_days, run_now,
-                      schools:[{key,base,token,expiry,track_mode,only_course_ids}]}"""
         log = []
-        def step(msg): log.append(msg)
-
+        def step(m): log.append(m)
         repo = payload.get("repo", "").strip()
         if "/" not in repo:
             return {"ok": False, "log": ["Repo must look like owner/name."]}
 
-        # 1) Ensure the repo exists (create from this folder if missing).
-        ok, _ = _run(["gh", "repo", "view", repo])
-        if not ok:
+        # 1) Prepare the working copy of the repo.
+        WORKDIR.mkdir(parents=True, exist_ok=True)
+        repo_exists, _ = _run(["gh", "repo", "view", repo], cwd=Path.home())
+        if not (WORKDIR / ".git").exists():
+            if repo_exists:
+                step("Cloning your repo…")
+                ok, out = _run(["gh", "repo", "clone", repo, str(WORKDIR)],
+                               cwd=Path.home())
+                if not ok and "already exists" not in out:
+                    return {"ok": False, "log": [f"Clone failed:\n{out}"]}
+            else:
+                _run(["git", "init", "-b", "main"])
+        materialize_program_files()
+        if not repo_exists:
             step(f"Creating repo {repo}…")
+            _run(["git", "add", "-A"])
+            _run(["git", "commit", "-m", "Initial canvas-sync deploy"])
             ok, out = _run(["gh", "repo", "create", repo, "--public",
-                            "--source", ".", "--remote", "origin", "--push"])
+                            "--source", str(WORKDIR), "--remote", "origin", "--push"])
             if not ok:
                 return {"ok": False, "log": [f"Could not create repo:\n{out}"]}
         step(f"Repo {repo} ready.")
 
-        # 2) Build and write config.json (no secrets inside).
+        # 2) Resolve Todoist project routing (create any requested new projects).
+        todoist = payload.get("todoist", "")
+        project_map = dict(payload.get("project_map", {}))
+        new_projects = payload.get("create_projects", {})  # {course_id: name}
+        if new_projects and todoist:
+            for cid, name in new_projects.items():
+                try:
+                    project_map[cid] = self._create_project(todoist, name)
+                    step(f"Created Todoist project '{name}'.")
+                except Exception as e:
+                    step(f"Could not create project '{name}': {e}")
+
+        # 3) Build config.json (no secrets inside).
         schools_cfg = []
         for s in payload["schools"]:
             entry = {"key": s["key"], "base": s["base"].rstrip("/"),
@@ -143,57 +217,54 @@ class Api:
             if s.get("expiry"):
                 entry["token_expires"] = s["expiry"]
             schools_cfg.append(entry)
-
         config = {
             "lookahead_days": payload.get("lookahead_days", 14),
             "recent_overdue_days": payload.get("recent_overdue_days", 7),
-            "track_mode": "all",
-            "only_course_ids": [],
-            "ignore_course_ids": [],
+            "track_mode": "all", "only_course_ids": [], "ignore_course_ids": [],
             "ignore_name_patterns": payload.get("ignore_name_patterns", []),
-            "notify_grades": True,
+            "notify_grades": True, "notify_due": True,
             "expiry_warn_days": payload.get("expiry_warn_days", 14),
+            "utc_offset_hours": int(payload.get("utc_offset_hours", 0)),
+            "todoist_project_map": project_map,
             "schools": schools_cfg,
         }
-        (REPO_ROOT / "config.json").write_text(
+        (WORKDIR / "config.json").write_text(
             json.dumps(config, indent=2) + "\n", encoding="utf-8")
         step("Wrote config.json.")
 
-        # 3) Commit & push config.
-        _run(["git", "add", "config.json"])
-        ok, out = _run(["git", "commit", "-m", "Update configuration via setup app"])
+        # 4) Commit & push.
+        _run(["git", "add", "-A"])
+        ok, _ = _run(["git", "commit", "-m", "Update configuration via setup app"])
         if ok:
             ok, out = _run(["git", "push"])
-            step("Pushed config to GitHub." if ok else f"Push note:\n{out}")
+            step("Pushed to GitHub." if ok else f"Push note:\n{out}")
         else:
-            step("Config unchanged (nothing to commit).")
+            step("No config changes to push.")
 
-        # 4) Set secrets.
+        # 5) Secrets.
         def set_secret(name, value):
             if not value:
                 return
-            ok, out = _run(["gh", "secret", "set", name, "--repo", repo,
-                            "--body", value])
+            ok, out = _run(["gh", "secret", "set", name, "--repo", repo, "--body", value])
             step(f"Secret {name}: {'set' if ok else 'FAILED ' + out}")
-
-        set_secret("TODOIST_TOKEN", payload.get("todoist", ""))
+        set_secret("TODOIST_TOKEN", todoist)
         set_secret("NTFY_TOPIC", payload.get("ntfy", ""))
         for s in payload["schools"]:
             set_secret(env_name_for(s["key"]), s.get("token", ""))
 
-        # 5) Optional immediate run.
+        # 6) Optional immediate run.
         if payload.get("run_now"):
-            ok, out = _run(["gh", "workflow", "run", "canvas-sync.yml", "--repo", repo])
-            step("Triggered a test run." if ok else f"Run trigger note:\n{out}")
+            ok, out = _run(["gh", "workflow", "run", "canvas-sync.yml", "--repo", repo],
+                           cwd=Path.home())
+            step("Triggered a test run." if ok else f"Run note:\n{out}")
 
         step("\nDone! Your sync is live and runs 3×/day on GitHub.")
         return {"ok": True, "log": log}
 
 
 def main():
-    api = Api()
     webview.create_window("Canvas Sync — Setup", str(UI_FILE),
-                          js_api=api, width=900, height=820, min_size=(760, 640))
+                          js_api=Api(), width=940, height=860, min_size=(780, 660))
     webview.start()
 
 

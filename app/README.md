@@ -15,6 +15,14 @@ python app/app.py
 
 On Windows you can also just double-click **`Launch Canvas Sync.bat`**.
 
+### Build a standalone .exe
+```bash
+pip install pyinstaller
+python app/build_exe.py        # -> dist/CanvasSync.exe
+```
+The one-file exe bundles the program; on first deploy it clones/creates your
+repo under `%LOCALAPPDATA%\CanvasSync` and pushes your settings from there.
+
 > Requires the [GitHub CLI](https://cli.github.com) (`gh`) installed and logged
 > in — the app uses it to create your repo and store secrets. The app's
 > **GitHub** card shows your connection status and a one-click connect button.
@@ -26,8 +34,12 @@ On Windows you can also just double-click **`Launch Canvas Sync.bat`**.
 2. **Notifications** — your Todoist token (with a Test button) and an ntfy topic
    for grade + token-expiry pushes (Random generates a secret one).
 3. **Schools & courses** — add each Canvas account (URL + token + optional expiry
-   date), **Fetch courses**, then tick exactly which courses to track. Leave
-   "Track all" on to sync everything.
+   date), **Fetch courses**, then tick exactly which courses to track. For each
+   course, pick a **Todoist project** from the dropdown (or "➕ New project" to
+   create one). Leave "Track all" on to sync everything.
+
+Click **Load Todoist projects** first (in step 2) so the per-course dropdowns
+are populated.
 
 **Connect & Deploy** writes `config.json`, pushes it, stores your tokens as
 encrypted GitHub secrets, and (optionally) runs a test sync right away.
