@@ -4,12 +4,15 @@ Keep on top of your coursework automatically. This tool runs on **GitHub's
 servers** on a schedule (your computer can be off), reads your **Canvas / bCourses**
 account(s), and:
 
-- 📝 Creates **Todoist tasks** for assignments due soon or recently overdue.
+- 📝 Creates **Todoist tasks** for assignments due soon or recently overdue,
+  routed into the **Todoist project** you choose per course.
 - 💬 Tracks **discussion posts *and* replies** — so it knows if you posted but
   still owe a reply to a classmate.
-- 🔔 Sends a **phone push notification** (via [ntfy.sh](https://ntfy.sh)) when a
-  new grade is posted.
-- 🏫 Works with **multiple schools** at once.
+- 🔔 Phone push (via [ntfy.sh](https://ntfy.sh)) when a **grade is posted or
+  changes**, the **day before and day of** a due date, and as a **token nears
+  expiry**.
+- 🏫 Works with **multiple schools** at once, each with its own course list.
+- 🖥️ Optional **desktop app / .exe** for point-and-click setup.
 
 **No AI runs at runtime.** It's plain Python hitting REST APIs:
 
@@ -110,6 +113,21 @@ push it so GitHub Actions uses them.
 `ignore_course_ids`, `ignore_name_patterns` can be set *inside a school* to
 override the global setting — e.g. track everything at one school but only one
 course at another.
+
+### Routing courses to Todoist projects
+Map each Canvas course to a Todoist project so tasks land in the right place:
+```jsonc
+"todoist_project_map": {
+  "69837":   "6gqVCfr7pJp7ffMX",   // course id -> Todoist project id
+  "1554980": "6gvR5jhfw3gx64fM"
+}
+```
+The desktop app fills this in for you with dropdowns (and can create projects).
+Courses with no mapping go to your Todoist Inbox.
+
+### Timezone
+Set `utc_offset_hours` to your offset (e.g. `-7` for US Pacific in summer) so
+"due today / tomorrow" reminders and task due dates line up with your day.
 
 ### Token expiry reminders
 Canvas tokens can be set to expire. Record each token's expiry date and get an
