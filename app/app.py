@@ -22,6 +22,12 @@ from pathlib import Path
 import requests
 import webview  # pip install pywebview
 
+import webbrowser
+try:
+    import ghauth
+except Exception:
+    ghauth = None
+
 try:
     from schedule import local_times_to_cron
 except Exception:  # fallback so the app still runs if schedule.py is missing
@@ -85,9 +91,12 @@ def _augmented_env():
 
 
 def _run(args, cwd=None, **kw):
+    # CREATE_NO_WINDOW stops a console from flashing for every gh/git call.
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     try:
         p = subprocess.run(args, capture_output=True, text=True,
-                           env=_augmented_env(), cwd=str(cwd or WORKDIR), **kw)
+                           env=_augmented_env(), cwd=str(cwd or WORKDIR),
+                           creationflags=flags, **kw)
         return p.returncode == 0, ((p.stdout or "") + (p.stderr or "")).strip()
     except Exception as e:
         return False, str(e)
@@ -169,19 +178,29 @@ class Api:
         return {"connected": True, "user": m.group(1) if m else "?",
                 "workflow_scope": "workflow" in out}
 
-    def github_connect(self):
-        # Launch gh sign-in in its OWN console (non-blocking) so it can open the
-        # browser and show the device code. Never wait/capture — that would hang.
-        try:
-            flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
-            subprocess.Popen(
-                ["gh", "auth", "login", "--web", "--git-protocol", "https",
-                 "--hostname", "github.com", "--scopes", "repo,workflow"],
-                env=_augmented_env(), cwd=str(Path.home()), creationflags=flags)
-            return {"ok": True, "detail": "A sign-in window opened — finish there, "
-                                          "then click 'Check connection'."}
-        except Exception as e:
-            return {"ok": False, "detail": f"Could not start GitHub sign-in: {e}"}
+    def github_device_start(self):
+        # Begin the in-app device flow and open the browser to the verify page.
+        # No console window — the code is shown inside the app UI.
+        if ghauth is None:
+            return {"ok": False, "error": "auth module unavailable"}
+        res = ghauth.start_device_flow()
+        if res.get("ok") and res.get("verification_uri"):
+            try:
+                webbrowser.open(res["verification_uri"])
+            except Exception:
+                pass
+        return res
+
+    def github_device_poll(self, device_code):
+        # Poll once; when authorized, store the token so gh + git use it.
+        if ghauth is None:
+            return {"status": "error", "error": "auth module unavailable"}
+        res = ghauth.poll_device_flow(device_code)
+        if res.get("status") == "done":
+            ok, detail = ghauth.store_token(res.get("token", ""))
+            if not ok:
+                return {"status": "error", "error": detail}
+        return res
 
     # ---------- Canvas ----------
     def fetch_courses(self, base, token):
@@ -234,6 +253,15 @@ class Api:
                           headers=todoist_headers(token), json={"name": name}, timeout=20)
         r.raise_for_status()
         return str(r.json()["id"])
+
+    def create_project(self, token, name):
+        if not token or not name.strip():
+            return {"ok": False, "error": "Enter a project name."}
+        try:
+            pid = self._create_project(token, name.strip())
+            return {"ok": True, "id": pid, "name": name.strip()}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     # ---------- Deploy ----------
     def deploy(self, payload):
@@ -339,8 +367,36 @@ class Api:
                            cwd=Path.home())
             step("Triggered a test run." if ok else f"Run note:\n{out}")
 
-        step("\nDone! Your sync is live and runs 3×/day on GitHub.")
+        step("\nDone! Your sync is live and runs on your schedule on GitHub.")
         return {"ok": True, "log": log}
+
+    def actions_usage(self, repo):
+        """Approx GitHub Actions minutes used this calendar month for the repo,
+        by summing recent workflow-run durations."""
+        import datetime as dt
+        ok, out = _run(["gh", "api", f"repos/{repo}/actions/runs?per_page=100"],
+                       cwd=Path.home())
+        if not ok:
+            return {"ok": False, "error": (out or "could not read runs")[:200]}
+        try:
+            runs = json.loads(out).get("workflow_runs", [])
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        now = dt.datetime.now(dt.timezone.utc)
+        total, count = 0.0, 0
+        for r in runs:
+            s, u = r.get("run_started_at"), r.get("updated_at")
+            if not s or not u:
+                continue
+            try:
+                sd = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+                ud = dt.datetime.fromisoformat(u.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if sd.year == now.year and sd.month == now.month:
+                total += max(0.0, (ud - sd).total_seconds())
+                count += 1
+        return {"ok": True, "month_minutes": round(total / 60, 1), "run_count": count}
 
 
 def main():

@@ -29,7 +29,11 @@ data = [
     f".github/workflows/canvas-sync.yml{sep}program",
 ]
 args = ["app/app.py", "--name", "CanvasSync", "--onefile", "--windowed",
-        "--noconfirm", "--clean"]
+        "--noconfirm", "--clean",
+        # our local sibling modules live in app/; pin them so the right ones
+        # are bundled (there is also a PyPI package called "schedule").
+        "--paths", "app",
+        "--hidden-import", "ghauth", "--hidden-import", "schedule"]
 icon = ROOT / "app" / "icon.ico"
 if icon.exists():
     args += ["--icon", str(icon)]

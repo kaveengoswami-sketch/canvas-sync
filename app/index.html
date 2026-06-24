@@ -54,6 +54,47 @@
   .deploybar{position:fixed;left:0;right:0;bottom:0;background:#0c0e15ee;border-top:1px solid var(--line);
     padding:12px 22px;display:flex;align-items:center;gap:14px;backdrop-filter:blur(6px)}
   .check{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}
+  /* Projects panel (notifications card) */
+  #projPanel{margin-top:12px;display:none}
+  #projPanel.show{display:block}
+  .projChips{display:flex;flex-wrap:wrap;gap:7px;max-height:220px;overflow:auto;
+    padding:10px;background:#11141d;border:1px solid var(--line);border-radius:9px}
+  .projChip{display:inline-flex;align-items:center;gap:6px;font-size:12px;
+    padding:5px 11px;border-radius:20px;background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);white-space:nowrap;max-width:100%}
+  .projChip .pn{overflow:hidden;text-overflow:ellipsis}
+  .projEmpty{color:var(--muted);font-size:12px;padding:4px 2px}
+  .projCreate{display:flex;gap:8px;align-items:center;margin-top:10px}
+  .projCreate input{flex:1}
+  /* Run-schedule time chips */
+  .timeChips{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .timeChip{display:inline-flex;align-items:center;gap:6px;
+    padding:5px 6px 5px 12px;border-radius:20px;background:var(--panel2);
+    border:1px solid var(--line);transition:.15s}
+  .timeChip:focus-within{border-color:var(--accent)}
+  .timeChip input.timev{width:88px;background:transparent;border:none;color:var(--text);
+    padding:2px 0;font:inherit;outline:none}
+  .timeChip .rm{display:inline-flex;align-items:center;justify-content:center;
+    width:20px;height:20px;border-radius:50%;border:none;background:transparent;
+    color:var(--muted);font-size:13px;line-height:1;cursor:pointer;padding:0;font-weight:700}
+  .timeChip .rm:hover{background:#2a131388;color:var(--bad);border:none}
+  .addTimeChip{display:inline-flex;align-items:center;gap:6px;
+    padding:6px 13px;border-radius:20px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--text);cursor:pointer;font-weight:600;
+    font-size:13px;transition:.15s}
+  .addTimeChip:hover{border-color:var(--accent);color:#fff}
+  /* In-app GitHub device-code panel */
+  #ghDevice{display:none;margin-top:12px;padding:13px 15px;border:1px solid var(--line);
+    border-radius:10px;background:#11141d}
+  #ghDevice.show{display:block}
+  .ghCodeRow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .ghCode{font-family:ui-monospace,Consolas,monospace;font-size:22px;letter-spacing:3px;
+    font-weight:700;color:#fff;background:var(--panel2);padding:4px 14px;border-radius:8px;
+    border:1px solid var(--line)}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
+    border-top-color:var(--accent);border-radius:50%;animation:sp 0.8s linear infinite;
+    vertical-align:-1px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -67,6 +108,14 @@
       <button class="mini" onclick="checkGitHub()">Check connection</button>
       <button class="mini ghost" onclick="connectGitHub()">Connect GitHub…</button>
       <span id="ghStatus" class="status"></span>
+    </div>
+    <div id="ghDevice">
+      <div class="ghCodeRow">
+        <span>Enter this code at GitHub:</span>
+        <span id="ghCode" class="ghCode">—</span>
+        <button class="mini" onclick="copyCode()">Copy</button>
+      </div>
+      <div class="hint" id="ghDeviceMsg"><span class="spin"></span>Your browser opened to github.com/login/device — enter the code and authorize. This updates automatically.</div>
     </div>
     <label>Repository (owner/name)</label>
     <input id="repo" type="text" placeholder="yourname/canvas-sync">
@@ -104,17 +153,28 @@
       <button class="mini" onclick="loadProjects()">Load Todoist projects</button>
       <span id="todoistStatus" class="status"></span>
     </div>
+    <div id="projPanel">
+      <label>Todoist projects</label>
+      <div id="projChips" class="projChips"></div>
+      <div class="projCreate">
+        <input id="newProjName" type="text" placeholder="New project name" onkeydown="if(event.key==='Enter'){event.preventDefault();createProjectInline();}">
+        <button class="mini" onclick="createProjectInline()">Create</button>
+        <span id="newProjStatus" class="status"></span>
+      </div>
+    </div>
     <p class="hint">Load projects, then route each course to one below. Install the ntfy app and subscribe to your topic to receive pushes.</p>
   </div>
 
   <div class="card">
     <h2>3 · Run schedule</h2>
     <p class="hint">When the sync runs each day, in your <b>local timezone</b> (set above). GitHub converts to UTC for you.</p>
-    <div id="times"></div>
+    <div id="times" class="timeChips"></div>
+    <div class="hint" id="schedEst" style="margin-top:12px"></div>
     <div class="toolbar">
-      <button class="mini" onclick="addTime()">+ Add time</button>
-      <span class="hint">Runs may be a few minutes late; daylight-saving can shift them ~1h.</span>
+      <button class="mini" onclick="checkUsage()">Check actual usage</button>
+      <span id="schedActual" class="status"></span>
     </div>
+    <p class="hint">Runs may be a few minutes late; daylight-saving can shift them ~1h.</p>
   </div>
 
   <div class="card">
@@ -160,25 +220,71 @@ async function checkGitHub(){
     $('ghStatus').textContent=s.detail||''; $('ghStatus').className='status bad';
   }
 }
+let ghPoll=null;
 async function connectGitHub(){
-  $('ghStatus').textContent='Opening sign-in…'; $('ghStatus').className='status';
-  const r=await api.github_connect();
-  $('ghStatus').textContent=r.detail||'';
-  $('ghStatus').className='status '+(r.ok?'':'bad');   // failures shown in red, never green
+  if(!api) return;
+  $('ghStatus').textContent='Starting sign-in…'; $('ghStatus').className='status';
+  const r=await api.github_device_start();
+  if(!r.ok){ $('ghStatus').textContent='✕ '+(r.error||'failed'); $('ghStatus').className='status bad'; return; }
+  window._ghCode=r.user_code;
+  $('ghCode').textContent=r.user_code;
+  $('ghDevice').classList.add('show');
+  $('ghStatus').textContent='';
+  const interval=Math.max(2,(r.interval||5))*1000;
+  if(ghPoll) clearInterval(ghPoll);
+  ghPoll=setInterval(async()=>{
+    const p=await api.github_device_poll(r.device_code);
+    if(p.status==='done'){
+      clearInterval(ghPoll); ghPoll=null;
+      $('ghDevice').classList.remove('show');
+      checkGitHub();
+    } else if(p.status==='denied'||p.status==='expired'||p.status==='error'){
+      clearInterval(ghPoll); ghPoll=null;
+      $('ghDevice').classList.remove('show');
+      $('ghStatus').textContent='✕ '+(p.error||p.status); $('ghStatus').className='status bad';
+    } // pending / slow_down: keep waiting
+  }, interval);
 }
+function copyCode(){ if(window._ghCode && navigator.clipboard){ navigator.clipboard.writeText(window._ghCode); } }
 function addTime(val){
   const wrap=document.createElement('div');
-  wrap.className='toolbar'; wrap.style.marginTop='6px';
-  wrap.innerHTML=`<input type="time" class="timev" style="max-width:160px" value="${val||''}">
-    <button class="mini ghost" onclick="this.parentNode.remove()">Remove</button>`;
-  $('times').appendChild(wrap);
+  wrap.className='timeChip';
+  wrap.innerHTML=`<input type="time" class="timev" value="${val||''}" oninput="updateEstimate()">
+    <button class="rm" title="Remove" onclick="this.parentNode.remove();updateEstimate()">✕</button>`;
+  const addBtn=document.getElementById('addTimeBtn');
+  $('times').insertBefore(wrap, addBtn);
+  updateEstimate();
 }
 function collectTimes(){ return [...document.querySelectorAll('.timev')].map(i=>i.value).filter(Boolean); }
+function updateEstimate(){
+  const n=collectTimes().length, mins=Math.round(n*30*1.5);
+  $('schedEst').innerHTML=`≈ <b>${n}</b> run(s)/day → ~<b>${mins} min/month</b> estimated `+
+    `<span style="color:var(--muted)">· public repos are unlimited &amp; free</span>`;
+}
+async function checkUsage(){
+  const repo=$('repo').value.trim();
+  if(!repo.includes('/')){ $('schedActual').textContent='Enter the repo above first'; $('schedActual').className='status bad'; return; }
+  $('schedActual').textContent='checking…'; $('schedActual').className='status';
+  const r=await api.actions_usage(repo);
+  if(!r.ok){ $('schedActual').textContent='✕ '+(r.error||'failed'); $('schedActual').className='status bad'; return; }
+  $('schedActual').textContent=`actual: ~${r.month_minutes} min this month (${r.run_count} runs)`;
+  $('schedActual').className='status ok';
+}
 // Open the native date/time picker on click instead of only on the tiny icon.
 document.addEventListener('click',e=>{
   const el=e.target;
   if(el&&el.matches&&el.matches('input[type=date],input[type=time]')){ try{el.showPicker();}catch(_){} }
 });
+// Auto-shorten a Canvas URL to just its origin when the field loses focus.
+function shortenCanvasUrl(el){
+  if(!el||!el.matches||!el.matches('input.canvasurl')) return;
+  let v=(el.value||'').trim();
+  if(!v) return;
+  if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) v='https://'+v;
+  try{ el.value=new URL(v).origin.replace(/\/+$/,''); }catch(_){ /* leave unchanged */ }
+}
+document.addEventListener('blur',e=>shortenCanvasUrl(e.target),true);
+document.addEventListener('change',e=>shortenCanvasUrl(e.target));
 
 async function testTodoist(){
   $('todoistStatus').textContent='testing…'; $('todoistStatus').className='status';
@@ -193,6 +299,35 @@ async function loadProjects(){
   window.projects=r.projects;
   $('todoistStatus').textContent='✓ '+r.projects.length+' projects loaded';
   $('todoistStatus').className='status ok';
+  renderProjPanel();
+  document.querySelectorAll('select.proj').forEach(fillProjectSelect);
+}
+function renderProjPanel(){
+  const panel=$('projPanel'), box=$('projChips');
+  panel.classList.add('show');
+  if(!window.projects.length){
+    box.innerHTML='<span class="projEmpty">No projects yet — create one below.</span>';
+    return;
+  }
+  box.innerHTML='';
+  window.projects.forEach(p=>{
+    const chip=document.createElement('span'); chip.className='projChip';
+    const nm=document.createElement('span'); nm.className='pn';
+    nm.textContent=p.name; nm.title=p.name;
+    chip.appendChild(nm); box.appendChild(chip);
+  });
+}
+async function createProjectInline(){
+  const token=$('todoist').value.trim(), name=$('newProjName').value.trim();
+  const st=$('newProjStatus');
+  if(!name){ st.textContent='Enter a name.'; st.className='status bad'; return; }
+  st.textContent='creating…'; st.className='status';
+  const r=await api.create_project(token,name);
+  if(!r.ok){ st.textContent='✕ '+(r.error||'failed'); st.className='status bad'; return; }
+  window.projects.push({id:r.id,name:r.name});
+  $('newProjName').value='';
+  st.textContent='✓ added'; st.className='status ok';
+  renderProjPanel();
   document.querySelectorAll('select.proj').forEach(fillProjectSelect);
 }
 function fillProjectSelect(sel){
@@ -231,7 +366,7 @@ function addSchool(){
   div.innerHTML=`
     <div class="row">
       <div><label>Label</label><input type="text" id="k${idx}" placeholder="e.g. Berkeley"></div>
-      <div style="flex:2"><label>Canvas URL</label><input type="text" id="b${idx}" placeholder="https://school.instructure.com"></div>
+      <div style="flex:2"><label>Canvas URL</label><input type="text" class="canvasurl" id="b${idx}" placeholder="https://school.instructure.com"></div>
     </div>
     <div class="row">
       <div style="flex:2"><label>Canvas API token</label><input type="password" id="t${idx}" placeholder="Canvas → Settings → Approved Integrations"></div>
@@ -313,6 +448,13 @@ function setDeploy(msg,ok){ const e=$('deployStatus'); e.textContent=msg;
   e.className='status '+(ok===null?'':(ok?'ok':'bad')); }
 
 addSchool();
+// Inline "+ Add time" chip sits at the end of the time-chip flow.
+(function(){
+  const btn=document.createElement('button');
+  btn.id='addTimeBtn'; btn.type='button'; btn.className='addTimeChip';
+  btn.textContent='+ Add time'; btn.onclick=()=>addTime();
+  $('times').appendChild(btn);
+})();
 ['09:00','17:00','00:00'].forEach(addTime);   // default daily run times (local)
 </script>
 </body>
