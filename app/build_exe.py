@@ -30,6 +30,9 @@ data = [
 ]
 args = ["app/app.py", "--name", "CanvasSync", "--onefile", "--windowed",
         "--noconfirm", "--clean"]
+icon = ROOT / "app" / "icon.ico"
+if icon.exists():
+    args += ["--icon", str(icon)]
 for d in data:
     args += ["--add-data", d]
 

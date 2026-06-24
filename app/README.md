@@ -13,13 +13,18 @@ pip install -r app/requirements.txt
 python app/app.py
 ```
 
-On Windows you can also just double-click **`Launch Canvas Sync.bat`**.
-
-### Build a standalone .exe
+### Build & install as a real Windows app
 ```bash
-pip install pyinstaller
-python app/build_exe.py        # -> dist/CanvasSync.exe
+pip install pyinstaller pillow
+python app/make_icon.py        # generates app/icon.ico
+python app/build_exe.py        # -> dist/CanvasSync.exe (windowed, no console)
+powershell -ExecutionPolicy Bypass -File app/install_windows.ps1
 ```
+The installer copies the exe to `%LOCALAPPDATA%\Programs\CanvasSync` and adds a
+Start Menu shortcut. After that it behaves like any normal app: press the
+Windows key, type **Canvas Sync**, launch it, and right-click to **pin to
+taskbar**. No console window — just the app.
+
 The one-file exe bundles the program; on first deploy it clones/creates your
 repo under `%LOCALAPPDATA%\CanvasSync` and pushes your settings from there.
 
