@@ -173,7 +173,27 @@ function fillProjectSelect(sel){
   let html='<option value="">— Inbox / none —</option>';
   html+=`<option value="new">➕ New project: ${name.slice(0,28)}</option>`;
   window.projects.forEach(p=>{ html+=`<option value="${p.id}">${p.name}</option>`; });
-  sel.innerHTML=html; if(cur) sel.value=cur;
+  sel.innerHTML=html;
+  // Keep an explicit choice; otherwise auto-guess the matching project by name.
+  const pick = cur || guessProject(name);
+  if(pick) sel.value=pick;
+}
+const STOP=new Set(['the','and','for','intro','introduction','course','fall',
+  'spring','summer','winter','section','sections','general','to','of','i','ii']);
+function guessProject(courseName){
+  const cn=(courseName||'').toLowerCase();
+  let best='', bestLen=0;
+  window.projects.forEach(p=>{
+    const pn=(p.name||'').toLowerCase().trim();
+    if(!pn || pn==='inbox') return;
+    if(cn.includes(pn) && pn.length>bestLen){ best=p.id; bestLen=pn.length; return; }
+    pn.split(/[^a-z0-9]+/).forEach(w=>{
+      if(w.length>=4 && !STOP.has(w) && cn.includes(w) && w.length>bestLen){
+        best=p.id; bestLen=w.length;
+      }
+    });
+  });
+  return best;
 }
 
 function addSchool(){

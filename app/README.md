@@ -36,7 +36,9 @@ repo under `%LOCALAPPDATA%\CanvasSync` and pushes your settings from there.
 3. **Schools & courses** — add each Canvas account (URL + token + optional expiry
    date), **Fetch courses**, then tick exactly which courses to track. For each
    course, pick a **Todoist project** from the dropdown (or "➕ New project" to
-   create one). Leave "Track all" on to sync everything.
+   create one). The app **auto-guesses** a matching project by name (e.g. a
+   "Chemistry" course → your "Chemistry" project) — you can override any guess
+   from the dropdown. Leave "Track all" on to sync everything.
 
 Click **Load Todoist projects** first (in step 2) so the per-course dropdowns
 are populated.
