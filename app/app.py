@@ -22,6 +22,25 @@ from pathlib import Path
 import requests
 import webview  # pip install pywebview
 
+try:
+    from schedule import local_times_to_cron
+except Exception:  # fallback so the app still runs if schedule.py is missing
+    def local_times_to_cron(times, offset_hours):
+        out = []
+        for t in times or []:
+            try:
+                hh, mm = t.strip().split(":")
+                if len(hh) != 2 or len(mm) != 2:
+                    continue
+                h, m = int(hh), int(mm)
+                if not (0 <= h <= 23 and 0 <= m <= 59):
+                    continue
+            except Exception:
+                continue
+            u = (h * 60 + m - round(offset_hours * 60)) % 1440
+            out.append(f"{u % 60} {u // 60} * * *")
+        return out
+
 FROZEN = getattr(sys, "frozen", False)
 APP_DIR = Path(__file__).resolve().parent
 DEV_REPO_ROOT = APP_DIR.parent
@@ -95,6 +114,51 @@ def todoist_headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+WORKFLOW_TMPL = '''name: Canvas sync
+
+on:
+  schedule:
+__CRONS__
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Restore notification state
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: canvas-sync-state-${{ github.run_id }}
+          restore-keys: |
+            canvas-sync-state-
+      - name: Run sync
+        env:
+__ENVS__
+        run: python canvas_sync.py
+'''
+
+
+def write_workflow(crons, secret_names):
+    """Generate .github/workflows/canvas-sync.yml with the chosen schedule and
+    the exact secret env vars this user's schools need."""
+    crons = crons or ["7 16 * * *"]
+    cron_lines = "\n".join(f'    - cron: "{c}"' for c in crons)
+    env_lines = "\n".join(f"          {n}: ${{{{ secrets.{n} }}}}" for n in secret_names)
+    path = WORKDIR / ".github" / "workflows" / "canvas-sync.yml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = WORKFLOW_TMPL.replace("__CRONS__", cron_lines).replace("__ENVS__", env_lines)
+    path.write_text(content, encoding="utf-8")
+
+
 class Api:
     # ---------- GitHub ----------
     def github_status(self):
@@ -106,10 +170,18 @@ class Api:
                 "workflow_scope": "workflow" in out}
 
     def github_connect(self):
-        ok, out = _run(["gh", "auth", "login", "--web", "--git-protocol", "https",
-                        "--scopes", "repo,workflow"], cwd=Path.home(), timeout=5)
-        return {"ok": ok, "detail": out or "Follow the browser prompt, then "
-                                            "click 'Check connection' again."}
+        # Launch gh sign-in in its OWN console (non-blocking) so it can open the
+        # browser and show the device code. Never wait/capture — that would hang.
+        try:
+            flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+            subprocess.Popen(
+                ["gh", "auth", "login", "--web", "--git-protocol", "https",
+                 "--hostname", "github.com", "--scopes", "repo,workflow"],
+                env=_augmented_env(), cwd=str(Path.home()), creationflags=flags)
+            return {"ok": True, "detail": "A sign-in window opened — finish there, "
+                                          "then click 'Check connection'."}
+        except Exception as e:
+            return {"ok": False, "detail": f"Could not start GitHub sign-in: {e}"}
 
     # ---------- Canvas ----------
     def fetch_courses(self, base, token):
@@ -231,6 +303,15 @@ class Api:
         (WORKDIR / "config.json").write_text(
             json.dumps(config, indent=2) + "\n", encoding="utf-8")
         step("Wrote config.json.")
+
+        # 3b) Generate the workflow with the chosen run times (local -> UTC cron)
+        #     and exactly the secret env vars these schools need.
+        crons = local_times_to_cron(payload.get("schedule_times", []),
+                                    int(payload.get("utc_offset_hours", 0)))
+        secret_names = ["TODOIST_TOKEN", "NTFY_TOPIC"] + \
+            [env_name_for(s["key"]) for s in payload["schools"]]
+        write_workflow(crons, secret_names)
+        step(f"Wrote schedule ({len(crons or [1])} run/day) to the workflow.")
 
         # 4) Commit & push.
         _run(["git", "add", "-A"])

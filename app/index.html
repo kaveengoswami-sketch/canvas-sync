@@ -108,7 +108,17 @@
   </div>
 
   <div class="card">
-    <h2>3 · Schools &amp; courses</h2>
+    <h2>3 · Run schedule</h2>
+    <p class="hint">When the sync runs each day, in your <b>local timezone</b> (set above). GitHub converts to UTC for you.</p>
+    <div id="times"></div>
+    <div class="toolbar">
+      <button class="mini" onclick="addTime()">+ Add time</button>
+      <span class="hint">Runs may be a few minutes late; daylight-saving can shift them ~1h.</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>4 · Schools &amp; courses</h2>
     <div id="schools"></div>
     <div class="toolbar">
       <button class="mini" onclick="addSchool()">+ Add school</button>
@@ -150,8 +160,25 @@ async function checkGitHub(){
     $('ghStatus').textContent=s.detail||''; $('ghStatus').className='status bad';
   }
 }
-async function connectGitHub(){ $('ghStatus').textContent='Opening browser…';
-  const r=await api.github_connect(); $('ghStatus').textContent=r.detail||''; }
+async function connectGitHub(){
+  $('ghStatus').textContent='Opening sign-in…'; $('ghStatus').className='status';
+  const r=await api.github_connect();
+  $('ghStatus').textContent=r.detail||'';
+  $('ghStatus').className='status '+(r.ok?'':'bad');   // failures shown in red, never green
+}
+function addTime(val){
+  const wrap=document.createElement('div');
+  wrap.className='toolbar'; wrap.style.marginTop='6px';
+  wrap.innerHTML=`<input type="time" class="timev" style="max-width:160px" value="${val||''}">
+    <button class="mini ghost" onclick="this.parentNode.remove()">Remove</button>`;
+  $('times').appendChild(wrap);
+}
+function collectTimes(){ return [...document.querySelectorAll('.timev')].map(i=>i.value).filter(Boolean); }
+// Open the native date/time picker on click instead of only on the tiny icon.
+document.addEventListener('click',e=>{
+  const el=e.target;
+  if(el&&el.matches&&el.matches('input[type=date],input[type=time]')){ try{el.showPicker();}catch(_){} }
+});
 
 async function testTodoist(){
   $('todoistStatus').textContent='testing…'; $('todoistStatus').className='status';
@@ -276,6 +303,7 @@ async function deploy(){
   const payload={ repo:$('repo').value.trim(), todoist:$('todoist').value.trim(),
     ntfy:$('ntfy').value.trim(), run_now:$('runNow').checked,
     utc_offset_hours:parseInt($('tz').value,10), schools,
+    schedule_times:collectTimes(),
     project_map:pr.map, create_projects:pr.create };
   const r=await api.deploy(payload);
   const log=$('log'); log.style.display='block'; log.textContent=(r.log||[]).join('\n');
@@ -285,6 +313,7 @@ function setDeploy(msg,ok){ const e=$('deployStatus'); e.textContent=msg;
   e.className='status '+(ok===null?'':(ok?'ok':'bad')); }
 
 addSchool();
+['09:00','17:00','00:00'].forEach(addTime);   // default daily run times (local)
 </script>
 </body>
 </html>
