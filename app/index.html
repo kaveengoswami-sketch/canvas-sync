@@ -138,13 +138,14 @@
       <div style="max-width:180px">
         <label>Your timezone</label>
         <select id="tz">
-          <option value="-7">US Pacific (PDT)</option>
-          <option value="-8">US Pacific (PST)</option>
-          <option value="-6">US Mountain</option>
-          <option value="-5">US Central</option>
-          <option value="-4">US Eastern</option>
-          <option value="0">UTC</option>
-          <option value="1">Central Europe</option>
+          <option value="America/Los_Angeles">US Pacific</option>
+          <option value="America/Denver">US Mountain</option>
+          <option value="America/Phoenix">US Arizona (no DST)</option>
+          <option value="America/Chicago">US Central</option>
+          <option value="America/New_York">US Eastern</option>
+          <option value="UTC">UTC</option>
+          <option value="Europe/London">UK / Ireland</option>
+          <option value="Europe/Berlin">Central Europe</option>
         </select>
       </div>
     </div>
@@ -205,6 +206,18 @@ const $=id=>document.getElementById(id);
 window.addEventListener('pywebviewready',()=>{api=window.pywebview.api;checkGitHub();});
 
 function genTopic(){ $('ntfy').value='grades-'+Math.random().toString(36).slice(2,12); }
+
+// Current whole-hour UTC offset for an IANA zone (DST-aware for today). Used only
+// as a representative value for the GitHub cron, which can't track DST anyway;
+// the sync itself buckets dates by the IANA `timezone` we also send.
+function offsetForZone(tz){
+  try{
+    const now=new Date();
+    const local=new Date(now.toLocaleString('en-US',{timeZone:tz}));
+    const utc=new Date(now.toLocaleString('en-US',{timeZone:'UTC'}));
+    return Math.round((local-utc)/3600000);
+  }catch(_){ return 0; }
+}
 
 async function checkGitHub(){
   if(!api) return;
@@ -267,7 +280,7 @@ async function checkUsage(){
   $('schedActual').textContent='checking…'; $('schedActual').className='status';
   const r=await api.actions_usage(repo);
   if(!r.ok){ $('schedActual').textContent='✕ '+(r.error||'failed'); $('schedActual').className='status bad'; return; }
-  $('schedActual').textContent=`actual: ~${r.month_minutes} min this month (${r.run_count} runs)`;
+  $('schedActual').textContent=`actual: ~${r.est_minutes} min this month (${r.run_count} runs)`;
   $('schedActual').className='status ok';
 }
 // Open the native date/time picker on click instead of only on the tiny icon.
@@ -437,7 +450,8 @@ async function deploy(){
   const pr=collectProjects();
   const payload={ repo:$('repo').value.trim(), todoist:$('todoist').value.trim(),
     ntfy:$('ntfy').value.trim(), run_now:$('runNow').checked,
-    utc_offset_hours:parseInt($('tz').value,10), schools,
+    timezone:$('tz').value,
+    utc_offset_hours:offsetForZone($('tz').value), schools,
     schedule_times:collectTimes(),
     project_map:pr.map, create_projects:pr.create };
   const r=await api.deploy(payload);

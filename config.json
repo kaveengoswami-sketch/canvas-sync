@@ -25,6 +25,7 @@
   "notify_grades": true,
   "notify_due": true,
   "expiry_warn_days": 14,
+  "timezone": "America/Los_Angeles",
   "utc_offset_hours": -7,
   "todoist_project_map": {
     "69837": "6gqVCfr7pJp7ffMX",

@@ -32,6 +32,11 @@ import datetime as dt
 from pathlib import Path
 from typing import Optional
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # Python < 3.9
+    ZoneInfo = None
+
 import requests
 
 # --------------------------------------------------------------------------
@@ -52,7 +57,8 @@ DEFAULT_CONFIG = {
     "notify_due": True,            # push the day before and day of a due date
     "expiry_warn_days": 14,        # start warning this many days before a token expires
     "todoist_project_map": {},     # {"<course_id>": "<todoist_project_id>"}
-    "utc_offset_hours": 0,         # your timezone offset, e.g. -7 for US Pacific (PDT)
+    "timezone": "",                # IANA name, e.g. "America/Los_Angeles" (DST-correct)
+    "utc_offset_hours": 0,         # fallback when "timezone" is unset, e.g. -7 for US Pacific
     "schools": [],                 # [{"key","base","token_env","token_expires"}]
 }
 
@@ -76,11 +82,17 @@ TODOIST_LABEL = "canvas"
 MARKER_PREFIX = "canvas-sync-id:"
 
 NOW = dt.datetime.now(dt.timezone.utc)
-UTC_OFFSET_HOURS = 0  # set from config in main(); used for local-date bucketing
+UTC_OFFSET_HOURS = 0  # fallback when no IANA timezone is configured
+LOCAL_TZ: Optional[dt.tzinfo] = None  # set from config in main(); preferred over the fixed offset
 
 
 def local_date(when: dt.datetime) -> dt.date:
-    """The calendar date of a UTC datetime in the user's configured timezone."""
+    """The calendar date of a UTC datetime in the user's local timezone.
+
+    Prefers a configured IANA timezone (which tracks daylight saving correctly);
+    falls back to a fixed UTC offset when none is set or it can't be loaded."""
+    if LOCAL_TZ is not None:
+        return when.astimezone(LOCAL_TZ).date()
     return (when + dt.timedelta(hours=UTC_OFFSET_HOURS)).date()
 
 
@@ -92,10 +104,10 @@ def _get(url: str, headers: dict, params: Optional[dict] = None) -> requests.Res
     for attempt in range(4):
         try:
             r = requests.get(url, headers=headers, params=params, timeout=30)
-            if r.status_code == 429:
+            if r.status_code == 429 and attempt < 3:
                 time.sleep(2 * (attempt + 1))
                 continue
-            r.raise_for_status()
+            r.raise_for_status()  # on the final attempt a 429 surfaces here too
             return r
         except requests.RequestException:
             if attempt == 3:
@@ -238,6 +250,7 @@ def collect_school(school: dict, cfg: dict):
                 {"include[]": "submission"}))
         except Exception:
             assignments = []
+        assignments_by_id = {a.get("id"): a for a in assignments}
 
         for a in assignments:
             sub = a.get("submission") or {}
@@ -276,7 +289,13 @@ def collect_school(school: dict, cfg: dict):
 
         # Discussion post/reply tracking.
         for t in topics:
-            due = parse_ts((t.get("assignment") or {}).get("due_at")
+            # A graded discussion's due date lives on its linked assignment,
+            # which the discussion_topics list endpoint does NOT embed. Pull it
+            # from the assignments we already fetched for this course (falling
+            # back to any embedded assignment, then the topic's own lock date).
+            twin = assignments_by_id.get(t.get("assignment_id"))
+            due = parse_ts((twin or {}).get("due_at")
+                           or (t.get("assignment") or {}).get("due_at")
                            or t.get("lock_at"))
             if not due or not (overdue_floor <= due <= lookahead):
                 continue
@@ -408,7 +427,11 @@ def check_token_expiries(cfg: dict, state: dict):
             continue
 
         days_left = (exp_date - today).days
-        done = set(fired.get(school["key"], []))
+        # Key the fired-state by (school, expiry date) so that rotating the
+        # token and setting a new token_expires re-arms the reminders instead
+        # of staying suppressed by the previous date's already-fired thresholds.
+        fkey = f"{school['key']}@{exp}"
+        done = set(fired.get(fkey, []))
 
         if days_left < 0:
             if "expired" not in done:
@@ -424,7 +447,12 @@ def check_token_expiries(cfg: dict, state: dict):
                           f"day(s) on {exp}. Regenerate it and update the secret.")
                 done.update(applicable)  # collapse backlog; one ping, not several
 
-        fired[school["key"]] = sorted(done, key=str)
+        # Drop stale entries from earlier expiry dates for this school so the
+        # state file doesn't accumulate dead keys after each token rotation.
+        for k in [k for k in fired
+                  if k.startswith(school["key"] + "@") and k != fkey]:
+            del fired[k]
+        fired[fkey] = sorted(done, key=str)
 
 
 def load_state() -> dict:
@@ -446,8 +474,16 @@ def save_state(state: dict):
 
 def main() -> int:
     cfg = load_config()
-    global UTC_OFFSET_HOURS
+    global UTC_OFFSET_HOURS, LOCAL_TZ
     UTC_OFFSET_HOURS = int(cfg.get("utc_offset_hours", 0))
+    tz_name = (cfg.get("timezone") or "").strip()
+    if tz_name and ZoneInfo is not None:
+        try:
+            LOCAL_TZ = ZoneInfo(tz_name)
+        except Exception:
+            print(f"WARNING: unknown timezone '{tz_name}'; falling back to "
+                  f"utc_offset_hours={UTC_OFFSET_HOURS}", file=sys.stderr)
+            LOCAL_TZ = None
     if not DRY_RUN and not TODOIST_TOKEN:
         print("ERROR: TODOIST_TOKEN not set (and DRY_RUN is off).", file=sys.stderr)
         return 1

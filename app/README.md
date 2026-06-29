@@ -17,15 +17,19 @@ python app/app.py
 ```bash
 pip install pyinstaller pillow
 python app/make_icon.py        # generates app/icon.ico
-python app/build_exe.py        # -> dist/CanvasSync.exe (windowed, no console)
+python app/build_exe.py        # -> dist/CanvasSync/ (folder; windowed, no console)
 powershell -ExecutionPolicy Bypass -File app/install_windows.ps1
 ```
-The installer copies the exe to `%LOCALAPPDATA%\Programs\CanvasSync` and adds a
-Start Menu shortcut. After that it behaves like any normal app: press the
+The installer copies the app folder to `%LOCALAPPDATA%\Programs\CanvasSync` and
+adds a Start Menu shortcut. After that it behaves like any normal app: press the
 Windows key, type **Canvas Sync**, launch it, and right-click to **pin to
 taskbar**. No console window — just the app.
 
-The one-file exe bundles the program; on first deploy it clones/creates your
+> Built with PyInstaller `--onedir` (a folder, not a single `.exe`) so it starts
+> in ~1-2s. A one-file build has to unpack itself to a temp folder on every
+> launch, which on Windows looks like a 10-30s hang before the window appears.
+
+The app bundles the program; on first deploy it clones/creates your
 repo under `%LOCALAPPDATA%\CanvasSync` and pushes your settings from there.
 
 > Requires the [GitHub CLI](https://cli.github.com) (`gh`) installed and logged

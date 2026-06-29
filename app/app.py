@@ -8,7 +8,7 @@ project, and click "Connect & Deploy" — the app ships your settings to GitHub
 so the sync runs in the cloud (laptop off).
 
 Run from source:  python app/app.py
-Build an .exe:     see build_exe.py  (PyInstaller one-file, windowed)
+Build an app:      see build_exe.py  (PyInstaller one-dir, windowed)
 """
 
 import os
@@ -75,6 +75,14 @@ BUNDLED = {
     "program/canvas-sync.yml": ".github/workflows/canvas-sync.yml",
 }
 
+# Persisted setup state (tokens, course picks, project routing, schedule) so the
+# app reopens fully populated instead of blank. User-scoped under %LOCALAPPDATA%.
+# Note: this holds your Canvas/Todoist tokens in plaintext on your own machine —
+# same trust boundary the app already uses (tokens are typed in and shipped to
+# GitHub secrets). Delete this file to clear saved credentials.
+SETTINGS_PATH = (Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+                 / "CanvasSync" / "setup.json")
+
 
 def _augmented_env():
     env = dict(os.environ)
@@ -99,6 +107,20 @@ def _run(args, cwd=None, **kw):
         return p.returncode == 0, ((p.stdout or "") + (p.stderr or "")).strip()
     except Exception as e:
         return False, str(e)
+
+
+def _git_identity_ready():
+    """Ensure git has a commit identity in WORKDIR. On a fresh machine neither
+    user.name nor user.email is set — `gh auth setup-git` configures credentials,
+    not identity — so `git commit` fails and the deploy would push nothing. Set a
+    sensible local default for whichever value is missing (leaves existing ones)."""
+    have_name, _ = _run(["git", "config", "user.name"])
+    if not have_name:
+        _run(["git", "config", "user.name", "Canvas Sync"])
+    have_email, _ = _run(["git", "config", "user.email"])
+    if not have_email:
+        _run(["git", "config", "user.email",
+              "canvas-sync@users.noreply.github.com"])
 
 
 def env_name_for(key: str) -> str:
@@ -168,6 +190,26 @@ def write_workflow(crons, secret_names):
 
 
 class Api:
+    # ---------- Persistence ----------
+    def load_settings(self):
+        """Return the saved setup state (or an empty dict on first run)."""
+        try:
+            if SETTINGS_PATH.exists():
+                data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+                return {"ok": True, "settings": data}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "settings": {}}
+        return {"ok": True, "settings": {}}
+
+    def save_settings(self, settings):
+        """Persist the current setup state so the app reopens populated."""
+        try:
+            SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # ---------- GitHub ----------
     def github_status(self):
         ok, out = _run(["gh", "auth", "status"], cwd=Path.home())
@@ -283,14 +325,18 @@ class Api:
             else:
                 _run(["git", "init", "-b", "main"])
         materialize_program_files()
+        _git_identity_ready()
         if not repo_exists:
             step(f"Creating repo {repo}…")
             _run(["git", "add", "-A"])
-            _run(["git", "commit", "-m", "Initial canvas-sync deploy"])
+            committed, cout = _run(["git", "commit", "-m", "Initial canvas-sync deploy"])
+            if not committed and "nothing to commit" not in cout.lower():
+                return {"ok": False,
+                        "log": log + [f"Could not make the initial commit:\n{cout}"]}
             ok, out = _run(["gh", "repo", "create", repo, "--public",
                             "--source", str(WORKDIR), "--remote", "origin", "--push"])
             if not ok:
-                return {"ok": False, "log": [f"Could not create repo:\n{out}"]}
+                return {"ok": False, "log": log + [f"Could not create repo:\n{out}"]}
         step(f"Repo {repo} ready.")
 
         # 2) Resolve Todoist project routing (create any requested new projects).
@@ -323,6 +369,7 @@ class Api:
             "ignore_name_patterns": payload.get("ignore_name_patterns", []),
             "notify_grades": True, "notify_due": True,
             "expiry_warn_days": payload.get("expiry_warn_days", 14),
+            "timezone": (payload.get("timezone") or "").strip(),
             "utc_offset_hours": int(payload.get("utc_offset_hours", 0)),
             "todoist_project_map": project_map,
             "schools": schools_cfg,
@@ -404,8 +451,37 @@ class Api:
         return {"ok": True, "est_minutes": round(total / 60, 1), "run_count": count}
 
 
+WINDOW_TITLE = "Canvas Sync — Setup"
+_SINGLE_INSTANCE_MUTEX = None  # held for the process lifetime to keep the lock
+
+
+def _acquire_single_instance() -> bool:
+    """True if we're the only instance. Otherwise focus the running window and
+    return False so the caller exits. Windows-only; a no-op elsewhere."""
+    if os.name != "nt":
+        return True
+    import ctypes
+    global _SINGLE_INSTANCE_MUTEX
+    ERROR_ALREADY_EXISTS = 183
+    _SINGLE_INSTANCE_MUTEX = ctypes.windll.kernel32.CreateMutexW(
+        None, False, "CanvasSyncSetup.singleton")
+    if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, WINDOW_TITLE)
+            if hwnd:
+                user32.ShowWindow(hwnd, 9)        # SW_RESTORE (un-minimize)
+                user32.SetForegroundWindow(hwnd)  # bring to front
+        except Exception:
+            pass
+        return False
+    return True
+
+
 def main():
-    webview.create_window("Canvas Sync — Setup", str(UI_FILE),
+    if not _acquire_single_instance():
+        return 0  # another copy is already open; we focused it and exit quietly
+    webview.create_window(WINDOW_TITLE, str(UI_FILE),
                           js_api=Api(), width=940, height=860, min_size=(780, 660))
     webview.start()
     return 0

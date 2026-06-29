@@ -1,20 +1,23 @@
 # Installs Canvas Sync as a normal Windows app:
-#   - copies the exe to %LOCALAPPDATA%\Programs\CanvasSync
+#   - copies the app folder to %LOCALAPPDATA%\Programs\CanvasSync
 #   - creates a Start Menu shortcut (searchable + pinnable)
 # Run:  powershell -ExecutionPolicy Bypass -File app\install_windows.ps1
 
 $ErrorActionPreference = "Stop"
 $repo   = Split-Path -Parent $PSScriptRoot
-$source = Join-Path $repo "dist\CanvasSync.exe"
-if (-not (Test-Path $source)) {
-  Write-Host "dist\CanvasSync.exe not found. Build it first: python app\build_exe.py" -ForegroundColor Yellow
+$source = Join-Path $repo "dist\CanvasSync"
+if (-not (Test-Path (Join-Path $source "CanvasSync.exe"))) {
+  Write-Host "dist\CanvasSync\CanvasSync.exe not found. Build it first: python app\build_exe.py" -ForegroundColor Yellow
   exit 1
 }
 
+# --onedir ships a whole folder (CanvasSync.exe + an _internal\ folder); the exe
+# will not run without its siblings, so copy the entire folder, not just the exe.
 $installDir = Join-Path $env:LOCALAPPDATA "Programs\CanvasSync"
+if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+Copy-Item (Join-Path $source "*") $installDir -Recurse -Force
 $target = Join-Path $installDir "CanvasSync.exe"
-Copy-Item $source $target -Force
 Write-Host "Installed to $target"
 
 # Start Menu shortcut -> makes it searchable in Windows and pinnable to taskbar
